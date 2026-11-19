@@ -11,25 +11,22 @@ import type {
   VariantListItem,
   VariantView
 } from "../../shared/catalog/types";
-import { Button, EmptyState, LoadingState, Notice, PageTitle, StatusBadge, confirmDelete, errorMessage, unitDimensionLabel } from "../shared/ui";
-
-type AttributeDraft = { name: string; value: string };
-
-function parseAttributes(text: string): AttributeDraft[] {
-  const parts = text.split(/[,،;]/).map((part) => part.trim()).filter(Boolean);
-  const attributes = parts.map((part) => {
-    const [name, ...values] = part.split("=");
-    return { name: name.trim(), value: values.join("=").trim() };
-  });
-  if (attributes.some((item) => !item.name || !item.value)) {
-    throw new Error("اكتب كل خاصية بصيغة الاسم=القيمة، وافصل بين الخصائص بفاصلة.");
-  }
-  return attributes;
-}
-
-function attributesText(attributes: AttributeDraft[]): string {
-  return attributes.map((item) => `${item.name}=${item.value}`).join("، ");
-}
+import {
+  Button,
+  DataTable,
+  Dialog,
+  FilterBar,
+  ListPagination,
+  Notice,
+  PageTitle,
+  SearchField,
+  SearchStatusFilter,
+  StatusBadge,
+  confirmDelete,
+  errorMessage,
+  unitDimensionLabel
+} from "../ui";
+import { attributesText, parseAttributes } from "../shared/attributes";
 
 export function VariantsPage() {
   const [page, setPage] = useState<Page<VariantListItem> | null>(null);
@@ -114,51 +111,58 @@ export function VariantsPage() {
     <PageTitle title="متغيرات الأصناف" description="إدارة الأكواد والخصائص المستقلة لكل متغير."
       action={<Button variant="primary" onClick={openNew}>إضافة متغير</Button>} />
     {error && <Notice kind="error">{error}</Notice>}{success && <Notice kind="success">{success}</Notice>}
-    <div className="filters">
-      <label className="search-field"><span>بحث</span><input value={search} onChange={(event) => { setSearch(event.target.value); setCurrentPage(1); }} placeholder="اسم أو كود المتغير" /></label>
-      <label><span>الحالة</span><select value={status} onChange={(event) => { setStatus(event.target.value as "all" | RecordStatus); setCurrentPage(1); }}>
-        <option value="all">كل الحالات</option><option value="active">نشط</option><option value="inactive">غير نشط</option>
+    <SearchStatusFilter
+      search={search}
+      onSearch={(value) => { setSearch(value); setCurrentPage(1); }}
+      status={status}
+      onStatus={(value) => { setStatus(value); setCurrentPage(1); }}
+      searchPlaceholder="اسم أو كود المتغير"
+    />
+    <DataTable
+      loading={loading}
+      rows={page?.items ?? []}
+      rowKey={(item) => item.id}
+      empty="لا توجد متغيرات مطابقة."
+      columns={[
+        { key: "name", header: "المتغير", render: (item) => item.name },
+        { key: "product", header: "الصنف", render: (item) => item.productName },
+        { key: "sku", header: "الكود", dir: "ltr", render: (item) => item.sku },
+        { key: "attributes", header: "الخصائص", render: (item) => item.attributeSummary },
+        { key: "unit", header: "الوحدة", render: (item) => item.baseUnitName },
+        { key: "status", header: "الحالة", render: (item) => <StatusBadge status={item.status} /> },
+        {
+          key: "actions",
+          header: "الإجراءات",
+          className: "row-actions",
+          render: (item) => (
+            <>
+              <Button variant="quiet" onClick={() => void openEdit(item.id)}>تعديل</Button>
+              <Button variant="quiet" onClick={() => void toggle(item)}>{item.status === "active" ? "تعطيل" : "تفعيل"}</Button>
+              <Button variant="quiet" onClick={() => void remove(item)}>حذف</Button>
+            </>
+          )
+        }
+      ]}
+    />
+    {page && <ListPagination page={page} currentPage={currentPage} onPage={setCurrentPage} />}
+    {editing && <Dialog
+      title={editing.id ? "تعديل المتغير" : "إضافة متغير"}
+      onClose={() => setEditing(false)}
+      onSubmit={save}
+      error={error}
+    >
+      {!editing.id && <label>الصنف<select name="productId" required defaultValue="">
+        <option value="">اختر صنفًا بمتغيرات</option>{availableProducts.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.sku}</option>)}
+      </select></label>}
+      <label>اسم المتغير<input name="name" required defaultValue={editing.name} /></label>
+      <label>كود المتغير<input name="sku" required dir="ltr" defaultValue={editing.sku} /></label>
+      <label>الوحدة الأساسية<select name="baseUnitId" required={!editing.id} defaultValue={editing.baseUnitId}>
+        <option value="">استخدام وحدة الصنف</option>{units.filter((item) => item.status === "active" || item.id === editing.baseUnitId)
+          .map((item) => <option key={item.id} value={item.id}>{item.name} ({item.symbol}) · {unitDimensionLabel(item.dimension)}</option>)}
       </select></label>
-    </div>
-    <div className="panel table-wrap">
-      {loading ? <LoadingState /> : page?.items.length ? <table>
-        <thead><tr><th>المتغير</th><th>الصنف</th><th>الكود</th><th>الخصائص</th><th>الوحدة</th><th>الحالة</th><th>الإجراءات</th></tr></thead>
-        <tbody>{page.items.map((item) => <tr key={item.id}>
-          <td>{item.name}</td><td>{item.productName}</td><td dir="ltr">{item.sku}</td><td>{item.attributeSummary}</td>
-          <td>{item.baseUnitName}</td><td><StatusBadge status={item.status} /></td>
-          <td className="row-actions"><Button variant="quiet" onClick={() => void openEdit(item.id)}>تعديل</Button>
-            <Button variant="quiet" onClick={() => void toggle(item)}>{item.status === "active" ? "تعطيل" : "تفعيل"}</Button>
-            <Button variant="quiet" onClick={() => void remove(item)}>حذف</Button></td>
-        </tr>)}</tbody>
-      </table> : <EmptyState>لا توجد متغيرات مطابقة.</EmptyState>}
-    </div>
-    {page && <Pagination page={page} currentPage={currentPage} onPage={setCurrentPage} />}
-    {editing && <div className="dialog-backdrop">
-      <form className="dialog form-grid" onSubmit={(event) => void save(event)}>
-        <h3>{editing.id ? "تعديل المتغير" : "إضافة متغير"}</h3>
-        {error && <Notice kind="error">{error}</Notice>}
-        {!editing.id && <label>الصنف<select name="productId" required defaultValue="">
-          <option value="">اختر صنفًا بمتغيرات</option>{availableProducts.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.sku}</option>)}
-        </select></label>}
-        <label>اسم المتغير<input name="name" required defaultValue={editing.name} /></label>
-        <label>كود المتغير<input name="sku" required dir="ltr" defaultValue={editing.sku} /></label>
-        <label>الوحدة الأساسية<select name="baseUnitId" required={!editing.id} defaultValue={editing.baseUnitId}>
-          <option value="">استخدام وحدة الصنف</option>{units.filter((item) => item.status === "active" || item.id === editing.baseUnitId)
-            .map((item) => <option key={item.id} value={item.id}>{item.name} ({item.symbol}) · {unitDimensionLabel(item.dimension)}</option>)}
-        </select></label>
-        <label>الخصائص<input name="attributes" required placeholder="اللون=أحمر، المقاس=M" defaultValue={attributesText(editing.attributes)} /></label>
-        <div className="dialog-actions"><Button type="submit" variant="primary">حفظ</Button><Button onClick={() => setEditing(false)}>إلغاء</Button></div>
-      </form>
-    </div>}
+      <label>الخصائص<input name="attributes" required placeholder="اللون=أحمر، المقاس=M" defaultValue={attributesText(editing.attributes)} /></label>
+    </Dialog>}
   </section>;
-}
-
-function Pagination(props: { page: Page<unknown>; currentPage: number; onPage: (page: number) => void }) {
-  return <div className="pagination"><span>النتائج: {props.page.total}</span><div>
-    <Button disabled={props.currentPage <= 1} onClick={() => props.onPage(props.currentPage - 1)}>السابق</Button>
-    <span>صفحة {props.page.page}</span>
-    <Button disabled={props.currentPage * props.page.pageSize >= props.page.total} onClick={() => props.onPage(props.currentPage + 1)}>التالي</Button>
-  </div></div>;
 }
 
 export function PackagingPage() {
@@ -242,40 +246,58 @@ export function PackagingPage() {
     <PageTitle title="وحدات التعبئة" description="تعريف عوامل التحويل الخاصة بكل صنف أو متغير."
       action={<Button variant="primary" onClick={() => { setEditing(null); setOwnerType("product"); }}>إضافة وحدة تعبئة</Button>} />
     {error && <Notice kind="error">{error}</Notice>}{success && <Notice kind="success">{success}</Notice>}
-    <div className="filters"><label className="search-field"><span>بحث</span><input value={search} onChange={(event) => { setSearch(event.target.value); setCurrentPage(1); }} placeholder="الصنف أو وحدة القياس" /></label>
-      <label><span>الحالة</span><select value={status} onChange={(event) => { setStatus(event.target.value as "all" | RecordStatus); setCurrentPage(1); }}>
-        <option value="all">كل الحالات</option><option value="active">نشط</option><option value="inactive">غير نشط</option>
-      </select></label></div>
-    <div className="panel table-wrap">{loading ? <LoadingState /> : page?.items.length ? <table>
-      <thead><tr><th>المالك</th><th>وحدة التعبئة</th><th>عامل التحويل</th><th>الحالة</th><th>الإجراءات</th></tr></thead>
-      <tbody>{page.items.map((item) => <tr key={item.id}>
-        <td>{item.ownerName}</td><td>{item.unitName} ({item.unitSymbol})</td><td>{item.factorLabel}</td><td><StatusBadge status={item.status} /></td>
-        <td className="row-actions"><Button variant="quiet" onClick={() => setEditing(item)}>تعديل</Button>
-          <Button variant="quiet" onClick={() => void toggle(item)}>{item.status === "active" ? "تعطيل" : "تفعيل"}</Button>
-          <Button variant="quiet" onClick={() => void remove(item)}>حذف</Button></td>
-      </tr>)}</tbody>
-    </table> : <EmptyState>لا توجد وحدات تعبئة معرفة.</EmptyState>}</div>
-    {page && <Pagination page={page} currentPage={currentPage} onPage={setCurrentPage} />}
-    {editing !== false && editing !== null && <div className="dialog-backdrop">
-      <form className="dialog form-grid" onSubmit={(event) => void save(event)}>
-        <h3>{editing?.id ? "تعديل وحدة التعبئة" : "إضافة وحدة تعبئة"}</h3>
-        {error && <Notice kind="error">{error}</Notice>}
-        {!editing?.id && <>
-          <label>نوع المالك<select value={ownerType} onChange={(event) => setOwnerType(event.target.value as "product" | "variant")}>
-            <option value="product">صنف عادي</option><option value="variant">متغير</option>
-          </select></label>
-          <label>الصنف أو المتغير<select name="ownerId" required defaultValue="">
-            <option value="">اختر المالك</option>{owners.map((owner) => <option key={owner.id} value={owner.id}>{owner.label}</option>)}
-          </select></label>
-        </>}
-        <label>وحدة التعبئة<select name="unitId" required defaultValue={editing?.unitId ?? ""}>
-          <option value="">اختر وحدة قياس</option>{units.filter((unit) => unit.status === "active" || unit.id === editing?.unitId)
-            .map((unit) => <option key={unit.id} value={unit.id}>{unit.name} ({unit.symbol}) · {unitDimensionLabel(unit.dimension)}</option>)}
+    <SearchStatusFilter
+      search={search}
+      onSearch={(value) => { setSearch(value); setCurrentPage(1); }}
+      status={status}
+      onStatus={(value) => { setStatus(value); setCurrentPage(1); }}
+      searchPlaceholder="الصنف أو وحدة القياس"
+    />
+    <DataTable
+      loading={loading}
+      rows={page?.items ?? []}
+      rowKey={(item) => item.id}
+      empty="لا توجد وحدات تعبئة معرفة."
+      columns={[
+        { key: "owner", header: "المالك", render: (item) => item.ownerName },
+        { key: "unit", header: "وحدة التعبئة", render: (item) => `${item.unitName} (${item.unitSymbol})` },
+        { key: "factor", header: "عامل التحويل", render: (item) => item.factorLabel },
+        { key: "status", header: "الحالة", render: (item) => <StatusBadge status={item.status} /> },
+        {
+          key: "actions",
+          header: "الإجراءات",
+          className: "row-actions",
+          render: (item) => (
+            <>
+              <Button variant="quiet" onClick={() => setEditing(item)}>تعديل</Button>
+              <Button variant="quiet" onClick={() => void toggle(item)}>{item.status === "active" ? "تعطيل" : "تفعيل"}</Button>
+              <Button variant="quiet" onClick={() => void remove(item)}>حذف</Button>
+            </>
+          )
+        }
+      ]}
+    />
+    {page && <ListPagination page={page} currentPage={currentPage} onPage={setCurrentPage} />}
+    {editing !== false && editing !== null && <Dialog
+      title={editing?.id ? "تعديل وحدة التعبئة" : "إضافة وحدة تعبئة"}
+      onClose={() => setEditing(false)}
+      onSubmit={save}
+      error={error}
+    >
+      {!editing?.id && <>
+        <label>نوع المالك<select value={ownerType} onChange={(event) => setOwnerType(event.target.value as "product" | "variant")}>
+          <option value="product">صنف عادي</option><option value="variant">متغير</option>
         </select></label>
-        <label>عدد وحدات الأساس في وحدة التعبئة<input name="conversionFactor" required inputMode="decimal" defaultValue={editing?.factorLabel ?? "1"} /></label>
-        <div className="dialog-actions"><Button type="submit" variant="primary">حفظ</Button><Button onClick={() => setEditing(false)}>إلغاء</Button></div>
-      </form>
-    </div>}
+        <label>الصنف أو المتغير<select name="ownerId" required defaultValue="">
+          <option value="">اختر المالك</option>{owners.map((owner) => <option key={owner.id} value={owner.id}>{owner.label}</option>)}
+        </select></label>
+      </>}
+      <label>وحدة التعبئة<select name="unitId" required defaultValue={editing?.unitId ?? ""}>
+        <option value="">اختر وحدة قياس</option>{units.filter((unit) => unit.status === "active" || unit.id === editing?.unitId)
+          .map((unit) => <option key={unit.id} value={unit.id}>{unit.name} ({unit.symbol}) · {unitDimensionLabel(unit.dimension)}</option>)}
+      </select></label>
+      <label>عدد وحدات الأساس في وحدة التعبئة<input name="conversionFactor" required inputMode="decimal" defaultValue={editing?.factorLabel ?? "1"} /></label>
+    </Dialog>}
   </section>;
 }
 
@@ -377,19 +399,39 @@ export function BarcodesPage() {
       <div className="row-actions"><Button onClick={() => void prepareLabel()}>تجهيز ملصق</Button>{label && <Button onClick={() => window.print()}>طباعة</Button>}</div>
       {label && <div className="barcode-label"><strong>{label.productName}</strong><span>{label.variantName ?? ""}</span><b dir="ltr">{label.sku}</b><code dir="ltr">{label.code}</code><small>{label.unitLabel}</small></div>}
     </div>}
-    <div className="filters"><label className="search-field"><span>بحث في القائمة</span><input value={search} onChange={(event) => { setSearch(event.target.value); setCurrentPage(1); }} placeholder="رقم الباركود أو الصنف" /></label></div>
-    <div className="panel table-wrap">{loading ? <LoadingState /> : page?.items.length ? <table>
-      <thead><tr><th>الباركود</th><th>الصنف</th><th>المتغير</th><th>وحدة التعبئة</th><th>الإجراءات</th></tr></thead>
-      <tbody>{page.items.map((item) => <tr key={item.id}>
-        <td dir="ltr">{item.code}</td><td>{item.productName}</td><td>{item.variantName ?? "—"}</td><td>{item.packagingLabel ?? "الوحدة الأساسية"}</td>
-        <td className="row-actions"><Button variant="quiet" onClick={() => { setFindCode(item.code); void window.warehouse.catalog.barcodes.find({ code: item.code }).then(setLookup).catch((caught) => setError(errorMessage(caught))); }}>عرض</Button>
-          <Button variant="quiet" onClick={() => void remove(item)}>حذف</Button></td>
-      </tr>)}</tbody>
-    </table> : <EmptyState>لا توجد باركودات مطابقة.</EmptyState>}</div>
-    {page && <Pagination page={page} currentPage={currentPage} onPage={setCurrentPage} />}
-    {showAdd && <div className="dialog-backdrop"><form className="dialog form-grid" onSubmit={(event) => void add(event)}>
-      <h3>إضافة باركود</h3>
-      {error && <Notice kind="error">{error}</Notice>}
+    <FilterBar>
+      <SearchField
+        value={search}
+        onChange={(value) => { setSearch(value); setCurrentPage(1); }}
+        label="بحث في القائمة"
+        placeholder="رقم الباركود أو الصنف"
+      />
+    </FilterBar>
+    <DataTable
+      loading={loading}
+      rows={page?.items ?? []}
+      rowKey={(item) => item.id}
+      empty="لا توجد باركودات مطابقة."
+      columns={[
+        { key: "code", header: "الباركود", dir: "ltr", render: (item) => item.code },
+        { key: "product", header: "الصنف", render: (item) => item.productName },
+        { key: "variant", header: "المتغير", render: (item) => item.variantName ?? "—" },
+        { key: "packaging", header: "وحدة التعبئة", render: (item) => item.packagingLabel ?? "الوحدة الأساسية" },
+        {
+          key: "actions",
+          header: "الإجراءات",
+          className: "row-actions",
+          render: (item) => (
+            <>
+              <Button variant="quiet" onClick={() => { setFindCode(item.code); void window.warehouse.catalog.barcodes.find({ code: item.code }).then(setLookup).catch((caught) => setError(errorMessage(caught))); }}>عرض</Button>
+              <Button variant="quiet" onClick={() => void remove(item)}>حذف</Button>
+            </>
+          )
+        }
+      ]}
+    />
+    {page && <ListPagination page={page} currentPage={currentPage} onPage={setCurrentPage} />}
+    {showAdd && <Dialog title="إضافة باركود" onClose={() => setShowAdd(false)} onSubmit={add} error={error}>
       <label>نوع المالك<select value={targetType} onChange={(event) => { setTargetType(event.target.value as "product" | "variant"); setTargetId(""); }}>
         <option value="product">صنف عادي</option><option value="variant">متغير</option>
       </select></label>
@@ -400,7 +442,6 @@ export function BarcodesPage() {
       <label>وحدة التعبئة (اختياري)<select name="packagingUnitId">
         <option value="">الوحدة الأساسية</option>{availablePackaging.map((item) => <option key={item.id} value={item.id}>{item.unitName}</option>)}
       </select></label>
-      <div className="dialog-actions"><Button type="submit" variant="primary">حفظ</Button><Button onClick={() => setShowAdd(false)}>إلغاء</Button></div>
-    </form></div>}
+    </Dialog>}
   </section>;
 }

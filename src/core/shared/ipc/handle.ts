@@ -7,12 +7,21 @@ import type { IpcResult } from "../../../shared/ipc/result";
 export type ZodSchema = ZodType<unknown, any, unknown>;
 
 type Executor<TInput, TOutput> = (input: TInput) => TOutput | Promise<TOutput>;
+type IpcError = Extract<IpcResult<never>, { ok: false }>["error"];
+
+/** Maps every known error to a safe renderer-facing payload. */
+export function toIpcError(error: unknown): IpcError {
+  if (error instanceof AppError) return { code: error.code, message: error.message };
+  if (error instanceof CatalogValidationError) return { code: error.code, message: error.message };
+  // Unexpected error: hide internal details from the renderer.
+  return { code: "INTERNAL_ERROR", message: "حدث خطأ غير متوقع" };
+}
 
 /**
  * Wraps a use-case execution behind a typed IPC boundary.
  *
  * - Validates input with Zod.
- * * Maps domain/validation errors to an Arabic user-facing message.
+ * - Maps domain/validation errors to an Arabic user-facing message.
  * - Never leaks stack traces or internal database details to the renderer.
  */
 export function handle<TInput, TOutput>(deps: {
@@ -36,14 +45,7 @@ export function handle<TInput, TOutput>(deps: {
       const data = await deps.execute(parsed.data as TInput);
       return { ok: true, data };
     } catch (error) {
-      if (error instanceof AppError) {
-        return { ok: false, error: { code: error.code, message: error.message } };
-      }
-      if (error instanceof CatalogValidationError) {
-        return { ok: false, error: { code: error.code, message: error.message } };
-      }
-      // Unexpected error: hide internal details from the renderer.
-      return { ok: false, error: { code: "INTERNAL_ERROR", message: "حدث خطأ غير متوقع" } };
+      return { ok: false, error: toIpcError(error) };
     }
   };
 }

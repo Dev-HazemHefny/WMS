@@ -4,7 +4,7 @@ import type { AppInfo } from "../shared/ipc/contracts";
 import { BarcodesPage, PackagingPage, VariantsPage } from "./catalog/operations-pages";
 import { ProductDetailsPage, ProductFormPage, ProductsPage } from "./catalog/product-pages";
 import { BrandsPage, CategoriesPage, UnitsPage } from "./catalog/reference-pages";
-import { Notice, errorMessage } from "./shared/ui";
+import { Notice, errorMessage } from "./ui";
 
 const navigation = [
   { to: "/", label: "نظرة عامة", end: true },

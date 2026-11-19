@@ -1,8 +1,9 @@
 import type Database from "better-sqlite3";
+import { createBrandUseCases } from "../application/brands";
 import { createCategoryUseCases } from "../application/categories";
 import { systemClock, systemIds, type Clock, type IdGenerator, type ImageStorage, type UnitOfWork } from "../application/ports";
 import { createProductUseCases } from "../application/products";
-import { createBrandUseCases, createUnitUseCases } from "../application/references";
+import { createUnitUseCases } from "../application/units";
 import { SqliteBarcodeRepository } from "./sqlite-barcode-repository";
 import { SqliteCategoryRepository } from "./sqlite-category-repository";
 import { SqliteProductRepository } from "./sqlite-product-repository";

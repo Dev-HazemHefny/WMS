@@ -87,6 +87,55 @@ describe("catalog database migrations", () => {
     expect(match.barcode.packagingLabel).toContain("عبوة");
   });
 
+  it("creates variants, variant packaging and variant barcodes through the split services", () => {
+    let nextId = 0;
+    const catalog = createSqliteCatalog(
+      db,
+      { save: () => "image", read: () => null, remove: () => undefined },
+      { nowIso: () => "2026-01-01T00:00:00.000Z" },
+      { next: () => `id-${++nextId}` }
+    );
+    const category = catalog.createCategory({ name: "ملابس", code: "CLOTHES" });
+    const piece = catalog.createUnit({ name: "قطعة", symbol: "ق", dimension: "count" });
+    const pack = catalog.createUnit({ name: "عبوة", symbol: "ع", dimension: "count" });
+
+    const created = catalog.createProduct({
+      name: "قميص",
+      sku: "SHIRT",
+      categoryId: category.id,
+      baseUnitId: piece.id,
+      productType: "with_variants",
+      allowDecimalQuantity: false,
+      variants: [
+        {
+          name: "أحمر M",
+          sku: "SHIRT-RED-M",
+          attributes: [{ name: "اللون", value: "أحمر" }, { name: "المقاس", value: "M" }],
+          packaging: [{ unitId: pack.id, conversionFactor: "6" }],
+          barcodes: [{ code: "111", packagingUnitId: pack.id }]
+        },
+        {
+          name: "أزرق L",
+          sku: "SHIRT-BLUE-L",
+          attributes: [{ name: "اللون", value: "أزرق" }, { name: "المقاس", value: "L" }]
+        }
+      ]
+    });
+
+    expect(created.variants).toHaveLength(2);
+    expect(created.variants[0].packaging[0].factorLabel).toBe("6");
+    expect(created.barcodes).toHaveLength(1);
+    expect(created.barcodes[0].variantName).toBe("أحمر M");
+
+    const match = catalog.findProductByBarcode("111");
+    expect(match.product.product.id).toBe(created.product.id);
+    expect(match.barcode.variantName).toBe("أحمر M");
+
+    const label = catalog.prepareBarcodeLabel("111");
+    expect(label.variantName).toBe("أحمر M");
+    expect(label.unitLabel).toContain("عبوة");
+  });
+
   it("rejects legacy units defaulted to 'other' from packaging conversions (H-01)", () => {
     let nextId = 0;
     const catalog = createSqliteCatalog(

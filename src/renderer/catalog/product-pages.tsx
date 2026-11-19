@@ -13,7 +13,25 @@ import type {
   Unit,
   VariantDraft
 } from "../../shared/catalog/types";
-import { Button, EmptyState, LoadingState, Notice, PageTitle, StatusBadge, confirmDelete, errorMessage, unitDimensionLabel } from "../shared/ui";
+import {
+  Button,
+  DataTable,
+  EmptyState,
+  FilterBar,
+  ListPagination,
+  LoadingState,
+  Notice,
+  PageTitle,
+  SearchField,
+  StatusBadge,
+  StatusSelect,
+  confirmDelete,
+  errorMessage,
+  productTypeLabel,
+  unitDimensionLabel
+} from "../ui";
+import { parseAttributes } from "../shared/attributes";
+import { readFileAsDataUrl } from "../shared/files";
 
 type ProductFilters = {
   search: string;
@@ -31,9 +49,12 @@ function ProductFiltersBar(props: {
 }) {
   const set = (key: keyof ProductFilters, value: string) => props.onChange({ ...props.filters, [key]: value });
   return (
-    <div className="filters filters-wide">
-      <label className="search-field"><span>بحث</span><input value={props.filters.search} placeholder="اسم الصنف أو الكود"
-        onChange={(event) => set("search", event.target.value)} /></label>
+    <FilterBar wide>
+      <SearchField
+        value={props.filters.search}
+        onChange={(value) => set("search", value)}
+        placeholder="اسم الصنف أو الكود"
+      />
       <label><span>التصنيف</span><select value={props.filters.categoryId} onChange={(event) => set("categoryId", event.target.value)}>
         <option value="">كل التصنيفات</option>{props.categories.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
       </select></label>
@@ -43,10 +64,8 @@ function ProductFiltersBar(props: {
       <label><span>النوع</span><select value={props.filters.productType} onChange={(event) => set("productType", event.target.value)}>
         <option value="all">كل الأنواع</option><option value="simple">صنف عادي</option><option value="with_variants">صنف بمتغيرات</option>
       </select></label>
-      <label><span>الحالة</span><select value={props.filters.status} onChange={(event) => set("status", event.target.value)}>
-        <option value="all">كل الحالات</option><option value="active">نشط</option><option value="inactive">غير نشط</option>
-      </select></label>
-    </div>
+      <StatusSelect value={props.filters.status} onChange={(value) => set("status", value)} />
+    </FilterBar>
   );
 }
 
@@ -113,29 +132,35 @@ export function ProductsPage() {
         action={<Link className="button button-primary" to="/products/new">إضافة صنف</Link>} />
       {error && <Notice kind="error">{error}</Notice>}{success && <Notice kind="success">{success}</Notice>}
       <ProductFiltersBar filters={filters} categories={categories} brands={brands} onChange={changeFilters} />
-      <div className="panel table-wrap">
-        {loading ? <LoadingState /> : page?.items.length ? <table>
-          <thead><tr><th>الصنف</th><th>الكود</th><th>التصنيف</th><th>العلامة</th><th>وحدة القياس</th><th>النوع</th><th>الحالة</th><th>الإجراءات</th></tr></thead>
-          <tbody>{page.items.map((item) => <tr key={item.id}>
-            <td><Link className="table-link" to={`/products/${item.id}`}>{item.name}</Link></td>
-            <td dir="ltr">{item.sku}</td><td>{item.categoryName}</td><td>{item.brandName ?? "—"}</td>
-            <td>{item.baseUnitName} ({item.baseUnitSymbol})</td>
-            <td>{item.productType === "simple" ? "صنف عادي" : "بمتغيرات"}</td><td><StatusBadge status={item.status} /></td>
-            <td className="row-actions">
-              <Link className="text-action" to={`/products/${item.id}`}>عرض</Link>
-              <Link className="text-action" to={`/products/${item.id}/edit`}>تعديل</Link>
-              <Button variant="quiet" onClick={() => void toggle(item)}>{item.status === "active" ? "تعطيل" : "تفعيل"}</Button>
-              <Button variant="quiet" onClick={() => void remove(item)}>حذف</Button>
-            </td>
-          </tr>)}</tbody>
-        </table> : <EmptyState>لا توجد أصناف مطابقة. أضف صنفًا جديدًا للبدء.</EmptyState>}
-      </div>
-      {page && <div className="pagination">
-        <span>النتائج: {page.total}</span>
-        <div><Button disabled={currentPage <= 1} onClick={() => setCurrentPage((value) => value - 1)}>السابق</Button>
-          <span>صفحة {page.page}</span>
-          <Button disabled={currentPage * page.pageSize >= page.total} onClick={() => setCurrentPage((value) => value + 1)}>التالي</Button></div>
-      </div>}
+      <DataTable
+        loading={loading}
+        rows={page?.items ?? []}
+        rowKey={(item) => item.id}
+        empty="لا توجد أصناف مطابقة. أضف صنفًا جديدًا للبدء."
+        columns={[
+          { key: "name", header: "الصنف", render: (item) => <Link className="table-link" to={`/products/${item.id}`}>{item.name}</Link> },
+          { key: "sku", header: "الكود", dir: "ltr", render: (item) => item.sku },
+          { key: "category", header: "التصنيف", render: (item) => item.categoryName },
+          { key: "brand", header: "العلامة", render: (item) => item.brandName ?? "—" },
+          { key: "unit", header: "وحدة القياس", render: (item) => `${item.baseUnitName} (${item.baseUnitSymbol})` },
+          { key: "type", header: "النوع", render: (item) => productTypeLabel(item.productType) },
+          { key: "status", header: "الحالة", render: (item) => <StatusBadge status={item.status} /> },
+          {
+            key: "actions",
+            header: "الإجراءات",
+            className: "row-actions",
+            render: (item) => (
+              <>
+                <Link className="text-action" to={`/products/${item.id}`}>عرض</Link>
+                <Link className="text-action" to={`/products/${item.id}/edit`}>تعديل</Link>
+                <Button variant="quiet" onClick={() => void toggle(item)}>{item.status === "active" ? "تعطيل" : "تفعيل"}</Button>
+                <Button variant="quiet" onClick={() => void remove(item)}>حذف</Button>
+              </>
+            )
+          }
+        ]}
+      />
+      {page && <ListPagination page={page} currentPage={currentPage} onPage={setCurrentPage} />}
     </section>
   );
 }
@@ -143,27 +168,6 @@ export function ProductsPage() {
 type PackagingDraft = { unitId: string; conversionFactor: string };
 type BarcodeDraft = { code: string; packagingUnitId: string };
 type VariantFormDraft = VariantDraft & { attributesText: string };
-
-function parseAttributes(text: string): Array<{ name: string; value: string }> {
-  const parts = text.split(/[,،;]/).map((part) => part.trim()).filter(Boolean);
-  const attributes = parts.map((part) => {
-    const [name, ...valueParts] = part.split("=");
-    return { name: name.trim(), value: valueParts.join("=").trim() };
-  });
-  if (attributes.some((item) => !item.name || !item.value)) {
-    throw new Error("اكتب كل خاصية بصيغة الاسم=القيمة، وافصل بين الخصائص بفاصلة.");
-  }
-  return attributes;
-}
-
-function readImage(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => typeof reader.result === "string" ? resolve(reader.result) : reject(new Error("تعذر قراءة الصورة."));
-    reader.onerror = () => reject(new Error("تعذر قراءة الصورة."));
-    reader.readAsDataURL(file);
-  });
-}
 
 function ProductEditor(props: { product?: ProductDetails; categories: Category[]; units: Unit[]; brands: Brand[] }) {
   const navigate = useNavigate();
@@ -253,7 +257,7 @@ function ProductEditor(props: { product?: ProductDetails; categories: Category[]
           <label>صورة الصنف<input type="file" accept="image/png,image/jpeg,image/webp" onChange={async (event) => {
             const file = event.target.files?.[0];
             if (!file) return;
-            try { setImageDataUrl(await readImage(file)); }
+            try { setImageDataUrl(await readFileAsDataUrl(file)); }
             catch (caught) { setError(errorMessage(caught)); }
           }} /></label>
           {imageDataUrl && <Button onClick={() => setImageDataUrl(null)}>إزالة الصورة المختارة</Button>}
@@ -406,7 +410,7 @@ export function ProductDetailsPage() {
         <DetailRow label="التصنيف" value={details.categoryName} />
         <DetailRow label="العلامة التجارية" value={details.brandName ?? "بدون علامة تجارية"} />
         <DetailRow label="وحدة القياس" value={`${details.baseUnitName} (${details.baseUnitSymbol})`} />
-        <DetailRow label="النوع" value={product.productType === "simple" ? "صنف عادي" : "صنف بمتغيرات"} />
+        <DetailRow label="النوع" value={productTypeLabel(product.productType)} />
         <DetailRow label="الحالة" value={product.status === "active" ? "نشط" : "غير نشط"} />
         <DetailRow label="الكميات العشرية" value={product.allowDecimalQuantity ? "مسموح" : "غير مسموح"} />
         <DetailRow label="الوصف" value={product.description ?? "—"} />
