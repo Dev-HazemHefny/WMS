@@ -1,3 +1,4 @@
+import { InventoryPage } from "./inventory-page";
 import { useEffect, useState } from "react";
 import { HashRouter, Link, NavLink, Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
 import type { AppInfo } from "../shared/ipc/contracts";
@@ -8,6 +9,7 @@ import { Notice, errorMessage } from "./ui";
 
 const navigation = [
   { to: "/", label: "نظرة عامة", end: true },
+  { to: "/inventory", label: "المخزون" },
   { to: "/products", label: "الأصناف" },
   { to: "/categories", label: "التصنيفات" },
   { to: "/units", label: "وحدات القياس" },
@@ -113,6 +115,7 @@ export function App() {
     <Routes>
       <Route element={<AppLayout />}>
         <Route index element={<DashboardPage />} />
+        <Route path="inventory" element={<InventoryPage />} />
         <Route path="products" element={<ProductsPage />} />
         <Route path="products/new" element={<ProductFormPage />} />
         <Route path="products/:id/edit" element={<ProductFormPage />} />

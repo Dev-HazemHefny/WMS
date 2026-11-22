@@ -1,6 +1,5 @@
 import type {
   AddBarcodeInput,
-  Barcode,
   BarcodeLabel,
   BarcodeMatch,
   BarcodeView,
@@ -30,7 +29,7 @@ export function createBarcodeUseCases(ctx: ProductContext) {
     listBarcodes(query: PageQuery): Page<BarcodeView> {
       return deps.barcodes.list(query);
     },
-    addBarcode(input: AddBarcodeInput): Barcode {
+    addBarcode(input: AddBarcodeInput): BarcodeView {
       const productId = input.productId ?? null;
       const variantId = input.variantId ?? null;
       if ((productId ? 1 : 0) + (variantId ? 1 : 0) !== 1) {
@@ -41,7 +40,10 @@ export function createBarcodeUseCases(ctx: ProductContext) {
       if (variant && variant.productId !== product.id) {
         throw new DomainError("VARIANT_MISMATCH", "المتغير لا يتبع هذا الصنف");
       }
-      return insertBarcode(input.code, product, variantId, input.packagingUnitId ?? null);
+      const saved = insertBarcode(input.code, product, variantId, input.packagingUnitId ?? null);
+      const view = deps.barcodes.findViewByCode(saved.code);
+      if (!view) throw new DomainError("BARCODE_NOT_FOUND","الباركود غير موجود");
+      return view;
     },
     deleteBarcode({ id }: IdPayload): void {
       if (!deps.barcodes.findById(id)) throw new DomainError("BARCODE_NOT_FOUND", "الباركود غير موجود");

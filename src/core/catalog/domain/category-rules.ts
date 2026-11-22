@@ -26,9 +26,6 @@ export function assertValidParent(
       throw new DomainError("CATEGORY_NOT_FOUND", "التصنيف الأب غير موجود");
     }
     seen.add(current);
-    if (seen.size > 30) {
-      throw new DomainError("CATEGORY_DEPTH", "تجاوز التصنيف الحد المسموح لمستويات التفرع");
-    }
     current = byId.get(current) ?? null;
   }
 }

@@ -5,7 +5,7 @@ export interface Logger {
 
 export function createLogger(scope: string): Logger {
   return {
-    info: (message, metadata) => console.info(`[${scope}] ${message}`, metadata ?? ""),
-    error: (message, error) => console.error(`[${scope}] ${message}`, error ?? "")
+    info: (message, metadata) => console.info(JSON.stringify({level:"info",scope,message,metadata,time:new Date().toISOString()})),
+    error: (message, error) => console.error(JSON.stringify({level:"error",scope,message,error:error instanceof Error?error.message:undefined,time:new Date().toISOString()}))
   };
 }

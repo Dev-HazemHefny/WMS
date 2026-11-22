@@ -1,8 +1,8 @@
 # Warehouse Management System (WMS)
 ## Product Requirements Document (PRD) & System Design Specification
 
-**Version:** 1.0  
-**Document Status:** Initial Architecture & System Design Specification  
+**Version:** 2.0
+**Document Status:** Architecture V2
 **Application Type:** Offline Desktop Application  
 **Target Platform:** Windows  
 **Architecture:** Modular Monolith  
@@ -56,6 +56,8 @@
 ---
 
 # 2. Product Scope
+
+شركة واحدة لكل قاعدة بيانات محلية. يعمل المستخدمون بالتبادل على جهاز واحد، ويمكن للمستخدم امتلاك عدة أدوار. يتبع كل مخزن فرعًا واحدًا.
 
 ## 2.1 Version 1.0 – Core Modules
 
@@ -189,7 +191,7 @@
 
 يجب ألا يمتلك Renderer وصولًا مباشرًا إلى قاعدة البيانات أو واجهات Node.js.
 
-### C. Preload Process
+### C. Preload Script
 
 المسؤول عن توفير واجهة اتصال محددة وآمنة بين Renderer وMain Process.
 
@@ -390,6 +392,8 @@ Variants:
 - Carton = 12.
 
 #### Quantity Precision
+
+تُقبل الكميات حتى ثلاث منازل عشرية. التخزين بأجزاء الألف، والتحويل بعوامل كسرية دقيقة. يُرفض التقريب أو تجاوز نطاق العدد الصحيح.
 
 يدعم النظام:
 
@@ -671,7 +675,7 @@ TransferStock:
 
 StockReceiptPosted.
 
-قد تستجيب أجزاء أخرى للحدث بتحديث الأرصدة أو تشغيل عمليات إضافية.
+يتم تحديث الأرصدة داخل معاملة الاعتماد نفسها. يمكن نشر إشعارات بعد نجاح المعاملة.
 
 يجب أن تكون معالجة الأحداث متوافقة مع معاملات قاعدة البيانات، وألا تؤدي إلى فقدان الاتساق.
 
@@ -690,6 +694,8 @@ StockReceiptPosted.
 # 7. Stock Management Architecture
 
 يجب الفصل بين ثلاثة مفاهيم رئيسية:
+
+تملك وحدة Inventory مستندات المخزون وسجل الحركات والأرصدة. الاعتماد والعكس والتحويل الفوري عمليات ذرية. يمنع الرصيد السالب ويعيد تكرار نفس أمر الاعتماد نتيجته السابقة. يحتفظ كل سطر بوحدة الإدخال ومعامل التحويل وقت الاعتماد.
 
 ## 7.1 Stock Document
 
@@ -766,6 +772,8 @@ Stock Balance هو تمثيل للرصيد الحالي، بينما Stock Movem
 يجب أن تكون جميع عمليات تحديث الأرصدة متوافقة مع سجل الحركات.
 
 يجب أن تسمح البنية بإعادة مراجعة الأرصدة ومقارنتها بالحركات المسجلة.
+
+تستخدم الأرصدة هوية stock_item_id وموقعًا تابعًا لمخزن واحد. المخزن البسيط له موقع افتراضي.
 
 ## 8.5 Quantity Precision
 
@@ -859,7 +867,7 @@ React Renderer → Preload API → IPC → Electron Main → Application Core �
 - Product Module مسؤول عن تعريف الأصناف.
 - Warehouse Module مسؤول عن الهيكل المكاني.
 - Inventory Module مسؤول عن الأرصدة.
-- Stock Operations Module مسؤول عن العمليات التي تغير المخزون.
+- واجهة Stock Operations تستدعي خدمات Inventory لاعتماد كل حركة داخل معاملة واحدة.
 - Users Module مسؤول عن الهوية والصلاحيات.
 - Settings Module مسؤول عن إعدادات النظام.
 
@@ -923,6 +931,8 @@ React Renderer → Preload API → IPC → Electron Main → Application Core �
 
 ## 11.5 Inventory Counting Flow
 
+يُقفل الموقع حتى المراجعة والاعتماد أو الإلغاء. يسجل النظام الأرصدة المتوقعة عند بدء الجرد ويحفظ القفل بعد إعادة التشغيل.
+
 1. إنشاء مستند جرد.
 2. تحديد نطاق الجرد.
 3. تسجيل الكميات الفعلية.
@@ -971,6 +981,8 @@ React Renderer → Preload API → IPC → Electron Main → Application Core �
 - IPC Handlers عند الحاجة.
 
 ## 12.3 Critical Test Cases
+
+تشمل اختبارات القبول تكرار الاعتماد بعد فقد الرد، وفشل أحد طرفي التحويل، ومنع الرصيد السالب عند العكس، وقفل نطاق الجرد وحماية نسخة البيانات قبل الترحيل والاستعادة.
 
 - منع SKU المكرر.
 - منع Barcode المكرر.
@@ -1110,59 +1122,9 @@ Docker ليس شرطًا لتشغيل المنتج النهائي على جها�
 
 ---
 
-# 16. Recommended Project Structure
+# 16. Project Structure
 
-```text
-warehouse/
-│
-├── electron/
-│   ├── main/
-│   │   ├── main.ts
-│   │   ├── database/
-│   │   ├── ipc/
-│   │   └── bootstrap/
-│   │
-│   └── preload/
-│       └── index.ts
-│
-├── src/
-│   ├── app/
-│   │   ├── store/
-│   │   ├── router/
-│   │   └── providers/
-│   │
-│   ├── modules/
-│   │   ├── products/
-│   │   │   ├── domain/
-│   │   │   ├── application/
-│   │   │   ├── infrastructure/
-│   │   │   └── presentation/
-│   │   │
-│   │   ├── warehouses/
-│   │   ├── inventory/
-│   │   ├── stock-operations/
-│   │   ├── users/
-│   │   └── settings/
-│   │
-│   ├── shared/
-│   │   ├── database/
-│   │   ├── ipc/
-│   │   ├── errors/
-│   │   ├── validation/
-│   │   ├── types/
-│   │   └── utils/
-│   │
-│   └── main.tsx
-│
-├── tests/
-├── migrations/
-├── package.json
-└── tsconfig.json
-```
-
-هذا هيكل مبدئي، ويجب مراجعة مكان تنفيذ كل جزء من Infrastructure وApplication داخل Electron Main أو الـ Core المستقل قبل تثبيت الهيكل النهائي.
-
----
+`electron/main` owns bootstrap, database, recovery and IPC. `electron/preload` exposes the renderer bridge. `src/renderer` owns presentation. `src/core` contains application modules and their infrastructure. `src/shared` contains serializable contracts and pure utilities.
 
 # 17. Implementation Roadmap
 
@@ -1203,6 +1165,8 @@ warehouse/
 - Storage Locations.
 
 ## Phase 4 – Inventory Management
+
+تبدأ المرحلة باستلام كامل يشمل الصلاحيات والاعتماد وتحديث الرصيد والسجل والمطابقة، ثم تتوسع لتغطية العمليات التالية.
 
 - Stock Balances.
 - Available Quantities.
@@ -1290,23 +1254,9 @@ warehouse/
 - Database Migrations.
 - Unit and Integration Testing.
 
-## 18.3 Items Requiring Detailed Design Approval
+## 18.3 Architecture V2 decisions
 
-- العلاقة النهائية بين Companies وBranches وWarehouses.
-- هل يمكن للمخزن خدمة أكثر من فرع؟
-- تصميم Storage Location Hierarchy النهائي.
-- تصميم حالات مستندات المخزون والاعتماد والإلغاء والعكس.
-- قواعد حجز الكميات.
-- تمثيل الكميات العشرية والدقة الرقمية.
-- نطاق تفرد SKU وBarcode النهائي.
-- التعامل مع تعدد الباركود لنفس وحدة التعبئة.
-- سياسة تغيير Simple Product إلى Product With Variants بعد وجود حركات.
-- تفاصيل Supplier Relationship.
-- تفاصيل Backup & Restore.
-- آلية التحديث والترحيل.
-- حدود كل Module والواجهات التي يتعامل من خلالها مع الموديولات الأخرى.
-
----
+[Architecture V2 decision records](docs/architecture-v2.md) govern stock identity, posting, counting, security, and recovery. Supplier-directory scope, scannable label output, and reference-PC performance targets await product acceptance. Deliver trusted identity, recovery and a verified receipt posting path before expanding inventory workflows.
 
 # 19. Definition of Done
 

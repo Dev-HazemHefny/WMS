@@ -1,30 +1,32 @@
 import { ConversionFactor } from "./conversion";
 import { CatalogValidationError } from "./errors";
 
-const SCALE = 1_000_000n;
+const SCALE = 1_000n;
 
 /**
- * Quantity stored as an integer number of millionths.
+ * Quantity stored as an integer number of thousandths.
  * Conversion multiplies the scaled value and rejects any remainder.
  */
 export class Quantity {
-  private constructor(readonly minor: bigint) {}
+  private constructor(readonly minor: bigint) {
+    if (minor > 9223372036854775807n) throw new CatalogValidationError("QUANTITY_OVERFLOW", "الكمية تتجاوز الحد المسموح");
+  }
 
-  static parse(input: string, allowDecimal: boolean): Quantity {
+  static parse(input: string, allowDecimal: boolean, allowZero = false): Quantity {
     let raw = input.trim().replace(/\s/g, "");
     if (/^\d+,\d+$/.test(raw)) raw = raw.replace(",", ".");
     if (!/^\d+(\.\d+)?$/.test(raw)) {
       throw new CatalogValidationError("INVALID_QUANTITY", "الكمية غير صالحة");
     }
     const [whole, fraction = ""] = raw.split(".");
-    if (fraction.length > 6) {
-      throw new CatalogValidationError("QUANTITY_PRECISION", "دقة الكمية تتجاوز ست خانات عشرية");
+    if (fraction.length > 3) {
+      throw new CatalogValidationError("QUANTITY_PRECISION", "دقة الكمية تتجاوز ثلاث خانات عشرية");
     }
     if (!allowDecimal && /[1-9]/.test(fraction)) {
       throw new CatalogValidationError("DECIMAL_NOT_ALLOWED", "هذا الصنف لا يسمح بالكميات العشرية");
     }
-    const minor = BigInt(whole) * SCALE + BigInt((fraction + "000000").slice(0, 6));
-    if (minor <= 0n) throw new CatalogValidationError("INVALID_QUANTITY", "يجب أن تكون الكمية أكبر من صفر");
+    const minor = BigInt(whole) * SCALE + BigInt((fraction + "000").slice(0, 3));
+    if (minor === 0n && !allowZero) throw new CatalogValidationError("INVALID_QUANTITY", "يجب أن تكون الكمية أكبر من صفر");
     return new Quantity(minor);
   }
 
@@ -45,7 +47,7 @@ export class Quantity {
 
   format(): string {
     const whole = this.minor / SCALE;
-    const fraction = (this.minor % SCALE).toString().padStart(6, "0").replace(/0+$/, "");
+    const fraction = (this.minor % SCALE).toString().padStart(3, "0").replace(/0+$/, "");
     return fraction ? `${whole}.${fraction}` : whole.toString();
   }
 }

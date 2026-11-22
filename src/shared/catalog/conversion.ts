@@ -19,7 +19,7 @@ export class ConversionFactor {
   ) {}
 
   static of(numerator: number, denominator: number): ConversionFactor {
-    if (!Number.isInteger(numerator) || !Number.isInteger(denominator) || numerator <= 0 || denominator <= 0) {
+    if (!Number.isSafeInteger(numerator) || !Number.isSafeInteger(denominator) || numerator <= 0 || denominator <= 0) {
       throw new CatalogValidationError("INVALID_FACTOR", "عامل التحويل يجب أن يكون رقمًا موجبًا");
     }
     const divisor = gcd(BigInt(numerator), BigInt(denominator));

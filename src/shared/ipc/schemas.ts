@@ -61,8 +61,8 @@ const imageDataUrl = () =>
     );
 
 export const pageQuerySchema = z.object({
-  search: z.string().nullable().optional(),
-  status: z.enum(["active", "inactive"]).nullable().optional(),
+  search: z.string().nullish().transform(value => value ?? undefined),
+  status: z.enum(["active", "inactive"]).nullish().transform(value => value ?? undefined),
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(25)
 });

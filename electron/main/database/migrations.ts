@@ -1,4 +1,5 @@
-import type Database from "better-sqlite3";
+import { architectureV2 } from "./architecture-v2";
+import Database from "better-sqlite3";
 
 interface Migration {
   version: number;
@@ -14,7 +15,7 @@ const migrations: Migration[] = [
       version INTEGER PRIMARY KEY,
       name TEXT NOT NULL,
       applied_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );`
+    );`,
   },
   {
     version: 2,
@@ -24,7 +25,7 @@ const migrations: Migration[] = [
       value TEXT NOT NULL,
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
-    INSERT OR IGNORE INTO app_metadata (key, value) VALUES ('schema_version', '2');`
+    INSERT OR IGNORE INTO app_metadata (key, value) VALUES ('schema_version', '2');`,
   },
   {
     version: 3,
@@ -175,7 +176,7 @@ const migrations: Migration[] = [
     );
     CREATE INDEX idx_barcodes_product ON barcodes(product_id);
     CREATE INDEX idx_barcodes_variant ON barcodes(variant_id);
-    `
+    `,
   },
   {
     version: 4,
@@ -195,7 +196,7 @@ const migrations: Migration[] = [
     UPDATE app_metadata
       SET value = '4', updated_at = datetime('now')
       WHERE key = 'schema_version';
-    `
+    `,
   },
   {
     version: 5,
@@ -208,21 +209,69 @@ const migrations: Migration[] = [
     UPDATE app_metadata
       SET value = '5', updated_at = datetime('now')
       WHERE key = 'schema_version';
-    `
-  }
+    `,
+  },
+  { version: 6, name: "architecture_v2", up: architectureV2 },
 ];
 
-export function runMigrations(db: Database.Database): void {
+// Earlier build provenance is unknown. Verify the required v6 definitions
+// before treating a v6 database as current, including constraint/trigger bodies.
+let v6Definitions: { name: string; sql: string }[] | undefined;
+function verifyV6(db: Database.Database): void {
+  if (!v6Definitions) {
+    const reference = new Database(":memory:");
+    try {
+      for (const migration of migrations.filter(m => m.version <= 6)) reference.exec(migration.up);
+      v6Definitions = reference.prepare(
+        "SELECT name, sql FROM sqlite_schema WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%'"
+      ).all() as { name: string; sql: string }[];
+    } finally { reference.close(); }
+  }
+  const definition = db.prepare("SELECT sql FROM sqlite_schema WHERE name=?").pluck();
+  for (const expected of v6Definitions) {
+    if (definition.get(expected.name) !== expected.sql)
+      throw new Error("Incompatible schema v6: " + expected.name);
+  }
+}
+
+export function runMigrations(
+  db: Database.Database,
+  targetVersion = migrations.length,
+): void {
+  if (
+    db
+      .prepare("SELECT 1 FROM sqlite_master WHERE name='schema_migrations'")
+      .get() &&
+    db
+      .prepare("SELECT 1 FROM schema_migrations WHERE version > ?")
+      .get(migrations[migrations.length - 1].version)
+  )
+    throw new Error("Unsupported newer database");
+  if (db.prepare("SELECT 1 FROM sqlite_schema WHERE name='schema_migrations'").get() &&
+      db.prepare("SELECT 1 FROM schema_migrations WHERE version=6").get()) verifyV6(db);
   db.exec(migrations[0].up);
 
-  const getApplied = db.prepare("SELECT version FROM schema_migrations WHERE version = ?");
-  const insertApplied = db.prepare("INSERT INTO schema_migrations (version, name) VALUES (?, ?)");
+  const getApplied = db.prepare(
+    "SELECT version FROM schema_migrations WHERE version = ?",
+  );
+  const insertApplied = db.prepare(
+    "INSERT INTO schema_migrations (version, name) VALUES (?, ?)",
+  );
 
   for (const migration of migrations) {
+    if (migration.version > targetVersion) break;
     const alreadyApplied = getApplied.get(migration.version);
     if (alreadyApplied) continue;
 
     const apply = db.transaction(() => {
+      if (migration.version === 6) {
+        const invalid = db
+          .prepare(
+            "SELECT v.id FROM product_variants v JOIN products p ON p.id=v.product_id WHERE p.product_type<>'with_variants' UNION ALL SELECT b.id FROM barcodes b JOIN product_packaging_units u ON u.id=b.product_packaging_unit_id WHERE u.product_id IS NOT b.product_id UNION ALL SELECT b.id FROM barcodes b JOIN product_variant_packaging_units u ON u.id=b.variant_packaging_unit_id WHERE u.variant_id IS NOT b.variant_id LIMIT 1",
+          )
+          .get() as { id: string } | undefined;
+        if (invalid) throw new Error("Invalid catalog owner: " + invalid.id);
+      }
       db.exec(migration.up);
       insertApplied.run(migration.version, migration.name);
     });

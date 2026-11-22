@@ -6,7 +6,7 @@ Offline Windows desktop Warehouse Management System.
 - Electron + React + Vite + TypeScript
 - SQLite via better-sqlite3
 - Redux Toolkit, React Router, Tailwind CSS
-- Zod contracts/validation (to be added at use-case boundaries)
+- Zod validation at IPC boundaries
 - Jest + ts-jest
 
 ## Requirements
@@ -43,3 +43,9 @@ The test runner executes Jest with Electron's embedded Node runtime so the nativ
 - `src/renderer`: React presentation layer.
 
 Renderer code must never import Electron, Node.js, or database modules. All persistence access must go through an application use case exposed by a narrowly-scoped IPC handler.
+
+## Local operations
+
+On first launch create a local administrator with a password of at least 12 characters. The Inventory screen supports branch and location setup, draft posting, counts, full reversals, balance reconciliation and directory-based backup/restore. Successful restore restarts the application. The original dataset is retained. Keep backups on access-controlled storage.
+
+See [Architecture V2](docs/architecture-v2.md) for ownership and precision rules. Run `npm run typecheck`, `npm test`, and `npm run build` to validate a checkout.

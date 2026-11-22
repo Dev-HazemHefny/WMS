@@ -1,3 +1,4 @@
+import type { StockCommand, StockResult } from "./stock";
 import type {
   BarcodeLabel,
   BarcodeView,
@@ -23,6 +24,9 @@ export interface AppInfo {
 }
 
 export interface WarehouseApi {
+  identity:{ add(input:{name:string;password:string;roles:("admin"|"clerk"|"supervisor")[]}):Promise<void>; setupRequired():Promise<boolean>; login(input:{name:string;password:string;setup:boolean}):Promise<void>; logout():Promise<void> };
+  recovery:{backup():Promise<string|null>;restore():Promise<string|null>};
+  inventory:{ execute(command:StockCommand):Promise<StockResult> };
   system: {
     getAppInfo(): Promise<AppInfo>;
   };

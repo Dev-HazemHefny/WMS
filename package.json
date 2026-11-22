@@ -9,7 +9,9 @@
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "package": "npm run build && electron-builder",
-    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
+    "test:desktop": "node scripts/run-desktop-qa.cjs",
+    "check:architecture": "node scripts/check-boundaries.cjs",
+    "typecheck": "node scripts/check-boundaries.cjs && tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
     "test": "node scripts/run-jest.cjs --runInBand",
     "test:watch": "node scripts/run-jest.cjs --watch",
     "postinstall": "electron-rebuild -f -w better-sqlite3"
