@@ -1,4 +1,4 @@
-import type {WarehouseDirectory} from "../../warehouses/public";
+import type {InventoryWarehouseGateway, LocationOperation} from "../../warehouses/public";
 import type Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
 import type { StockCatalog } from "../../catalog/public";
@@ -47,7 +47,7 @@ export function createInventory(
   db: Database.Database,
   authorize: (actor: string, action: string) => void,
   catalog: StockCatalog,
-  warehouses: WarehouseDirectory,
+  warehouses: InventoryWarehouseGateway,
   backupBeforeRepair: ()=>void,
 ) {
   const run = (sql: string, ...args: unknown[]) => db.prepare(sql).run(...args);
@@ -105,6 +105,22 @@ export function createInventory(
       op,
       target,
     );
+  }
+  function validateLines(kind: string, lines: readonly StockLine[], countLocation?: string) {
+    for (const line of lines) {
+      if (kind === "count" && line.location !== countLocation) fail("INVALID_COUNT_LINE");
+      warehouses.assertLocationUsable(line.location,kind as LocationOperation);
+      if (kind === "transfer") {
+        if (!line.destination || line.destination === line.location) fail("INVALID_DESTINATION");
+        warehouses.assertLocationUsable(line.destination,"transfer");
+      } else if (line.destination) fail("INVALID_DESTINATION");
+    }
+  }
+  function countLocation(document: string): string {
+    const lock = get<{location:string}>("SELECT location FROM count_locks WHERE document=?",document);
+    if (!lock) fail("INVALID_COUNT_STATE");
+    warehouses.countLocationIds(lock.location);
+    return lock.location;
   }
   function execute(actor: string, cmd: StockCommand): StockResult {
     authorize(actor, permission[cmd.op]);
@@ -188,10 +204,12 @@ export function createInventory(
         if(doc.kind==="count")return {rows:rows("SELECT k.item,CAST(e.expected AS TEXT) expected,CAST(c.base AS TEXT) counted FROM (SELECT item FROM count_expected WHERE document=? UNION SELECT item FROM reviewed_counts WHERE document=?) k LEFT JOIN count_expected e ON e.document=? AND e.item=k.item LEFT JOIN reviewed_counts c ON c.document=? AND c.item=k.item",doc.id,doc.id,doc.id,doc.id)};
         return {rows:JSON.parse(doc.lines)};
       }
-      case "branch": warehouses.branch(id,cmd.name);break;
-      case "warehouse":warehouses.warehouse(id,cmd.branch,cmd.name);break;
-      case "location":warehouses.location(id,cmd.warehouse,cmd.name);break;
+      // Warehouse services own their audit event; do not also emit an Inventory one.
+      case "branch": return {id:warehouses.createBranch(actor,cmd.name)};
+      case "warehouse": return {id:warehouses.createWarehouse(actor,cmd.branch,cmd.name)};
+      case "location": return {id:warehouses.createLocation(actor,cmd.warehouse,cmd.name)};
       case "draft":
+        validateLines(cmd.kind,cmd.lines);
         run(
           "INSERT INTO documents(id,kind,state,lines) VALUES(?,?,'draft',?)",
           id,
@@ -200,6 +218,7 @@ export function createInventory(
         );
         break;
       case "count": {
+        warehouses.countLocationIds(cmd.location);
         run(
           "INSERT INTO documents(id,kind,state,lines) VALUES(?,'count','draft','[]')",
           id,
@@ -241,6 +260,11 @@ export function createInventory(
             get("SELECT 1 FROM documents WHERE original=?", doc.id)
           )
             fail("INVALID_REVERSAL");
+          // Include zero-variance count lines, which may have no movement entry.
+          for (const line of JSON.parse(doc.lines) as StockLine[]) {
+            warehouses.assertLocationUsable(line.location,"reversal");
+            if (line.destination) warehouses.assertLocationUsable(line.destination,"reversal");
+          }
           target = id;
           run(
             "INSERT INTO documents(id,kind,state,lines,original) VALUES(?,'reversal','draft',?,?)",
@@ -251,7 +275,8 @@ export function createInventory(
           for (const m of rows(
             "SELECT line,item,location,CAST(delta AS TEXT) delta,snapshot FROM movements WHERE document=? ORDER BY id DESC",
             doc.id,
-          ))
+          )) {
+            warehouses.assertLocationUsable(String(m.location),"reversal");
             apply(
               id,
               Number(m.line),
@@ -260,10 +285,12 @@ export function createInventory(
               -BigInt(String(m.delta)),
               String(m.snapshot),
             );
+          }
         } else if (cmd.op === "post") {
           if (doc.state !== (doc.kind === "count" ? "review" : "draft"))
             fail("INVALID_STATE");
           const lines = JSON.parse(doc.lines) as StockLine[];
+          validateLines(doc.kind,lines,doc.kind === "count" ? countLocation(doc.id) : undefined);
           for (const [i, l] of lines.entries()) {
             const resolved=catalog.resolveStockItem(l,doc.kind==="count");
             const reviewed=doc.kind==="count"?get<{base:string;snapshot:string}>("SELECT CAST(base AS TEXT) base,snapshot FROM reviewed_counts WHERE document=? AND item=?",doc.id,l.item):undefined;
@@ -294,10 +321,8 @@ export function createInventory(
             fail("INVALID_STATE");
           if (cmd.op === "review") {
             if (doc.kind !== "count") fail("INVALID_STATE");
-            const location = get<{ location: string }>(
-              "SELECT location FROM count_locks WHERE document=?",
-              doc.id,
-            )!.location;
+            const location = countLocation(doc.id);
+            validateLines("count",JSON.parse(doc.lines) as StockLine[],location);
             const counted = new Set<string>();
             for (const l of JSON.parse(doc.lines) as StockLine[]) {
               if (
@@ -318,6 +343,7 @@ export function createInventory(
           }
           if (cmd.op === "edit" && !cmd.lines.length && doc.kind !== "count")
             fail("EMPTY_DOCUMENT");
+          if (cmd.op === "edit") validateLines(doc.kind,cmd.lines,doc.kind === "count" ? countLocation(doc.id) : undefined);
           run(
             "UPDATE documents SET state=?,lines=?,version=version+1 WHERE id=?",
             cmd.op === "review"

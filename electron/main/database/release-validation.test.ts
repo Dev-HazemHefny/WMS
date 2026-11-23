@@ -10,7 +10,8 @@ import { createIdentity } from "@core/identity/application/identity";
 import { createInventory } from "@core/inventory/infrastructure/sqlite-inventory";
 import { createSqliteCatalog } from "@core/catalog/infrastructure/create-sqlite-catalog";
 import { createStockCatalog } from "@core/catalog/infrastructure/stock-catalog";
-import { createWarehouseDirectory } from "@core/warehouses/infrastructure/sqlite-directory";
+import { createInventoryWarehouseGateway } from "@core/warehouses/infrastructure/create-inventory-gateway";
+import { createSqliteLocationUsage } from "@core/inventory/infrastructure/sqlite-location-usage";
 import type { StockCommand } from "@shared/ipc/stock";
 
 let root:string, db:Database.Database, item:string, a:string, b:string;
@@ -18,7 +19,7 @@ let identity:ReturnType<typeof createIdentity>, execute:ReturnType<typeof create
 function open(){
   db=initializeDatabase(root);
   identity=createIdentity(db);
-  execute=createInventory(db,identity.authorize,createStockCatalog(db),createWarehouseDirectory(db),()=>{throw Error("backup unavailable")});
+  execute=createInventory(db,identity.authorize,createStockCatalog(db),createInventoryWarehouseGateway(db,identity.authorize,createSqliteLocationUsage(db)),()=>{throw Error("backup unavailable")});
 }
 const cmd=(input:StockCommand)=>execute(identity.actor(1),input);
 function draft(kind:"receipt"|"issue"|"transfer",quantity:string){
@@ -112,10 +113,10 @@ it("retains count locks across restart and enforces switched operator permission
   expect(()=>cmd({op:"rebuild"})).toThrow("backup unavailable");
   expect(businessState()).toEqual(posted);
 });
-it("rejects an incompatible database labeled v6 before accepting writes",()=>{
+it("rejects an incompatible current database before accepting writes",()=>{
   db.exec("DROP TRIGGER immutable_movement");
   closeDatabase();
-  expect(()=>initializeDatabase(root)).toThrow(/incompatible.*6/i);
+  expect(()=>initializeDatabase(root)).toThrow(/incompatible.*7/i);
 });
 it("rejects future schemas without altering their migration records",()=>{
   db.prepare("INSERT INTO schema_migrations(version,name) VALUES(99,'future')").run();
@@ -145,7 +146,7 @@ it("reopens the restored dataset with its original stock, receipt, barcode and o
   const restoredIdentity=createIdentity(db);
   await restoredIdentity.login(1,"admin","test-password-123",false);
   const stockCatalog=createStockCatalog(db);
-  const stock=createInventory(db,restoredIdentity.authorize,stockCatalog,createWarehouseDirectory(db),()=>{throw Error("unexpected repair")});
+  const stock=createInventory(db,restoredIdentity.authorize,stockCatalog,createInventoryWarehouseGateway(db,restoredIdentity.authorize,createSqliteLocationUsage(db)),()=>{throw Error("unexpected repair")});
   const actor=restoredIdentity.actor(1);
   expect(stockCatalog.resolveBarcode("00123").item).toBe(item);
   expect(stock(actor,{op:"post",document:receipt,version:1,command:"post/"+receipt})).toEqual({id:receipt});

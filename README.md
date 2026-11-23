@@ -25,6 +25,8 @@ npm run dev
 npm test
 npm run typecheck
 npm run build
+node scripts/run-desktop-qa.cjs --warehouses-ui
+npm run test:desktop
 ```
 
 ## Data location
@@ -46,6 +48,14 @@ Renderer code must never import Electron, Node.js, or database modules. All pers
 
 ## Local operations
 
-On first launch create a local administrator with a password of at least 12 characters. The Inventory screen supports branch and location setup, draft posting, counts, full reversals, balance reconciliation and directory-based backup/restore. Successful restore restarts the application. The original dataset is retained. Keep backups on access-controlled storage.
+On first launch create a local administrator with a password of at least 12 characters. Use **الفروع** to manage branches and **المخازن ومواقع التخزين** to manage warehouses and their location hierarchy. Each warehouse belongs to one branch; a central warehouse uses an explicit administrative branch. Warehouse creation adds one protected, stockable default root.
+
+The Inventory screen supports receipts, issues, immediate internal/cross-warehouse transfers, frozen counts, full reversals and ledger reconciliation. Operational selectors show only eligible stockable locations with warehouse names and full paths. A stockable parent's count covers its own location only, excluding children. Reparenting within a warehouse changes organization, never stock or historical IDs.
+
+Warehouse actions use current-session permissions enforced in Main/Application. Status, reparenting and branch reassignment have separate permissions. Definitions with stock, pending documents or active counts have lifecycle safeguards; reactivate an ineligible historical location before a new operation or reversal. Existing committed posting retries remain idempotent.
+
+Backup/restore remains available from Inventory. Successful restore validates a separate staged dataset, switches the active dataset and restarts the application; the original dataset is retained. Keep backups on access-controlled storage. Schema-v7 upgrades of existing databases require a verified, restorable backup including referenced Catalog media; backup verification failure aborts the upgrade.
+
+See the [Phase 3 operating guide](docs/phase3-operations.md) for setup, lifecycle/error recovery, backups and release acceptance. The [final Phase 3 validation report](docs/phase3-final-validation.md) separates development completion from customer production release. Existing Windows installation/upgrade/uninstall acceptance and earlier schema-v6 customer distribution remain separate release gates.
 
 See [Architecture V2](docs/architecture-v2.md) for ownership and precision rules. Run `npm run typecheck`, `npm test`, and `npm run build` to validate a checkout.

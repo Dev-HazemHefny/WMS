@@ -1,4 +1,5 @@
-import {createWarehouseDirectory} from "@core/warehouses/infrastructure/sqlite-directory";
+import {createInventoryWarehouseGateway} from "@core/warehouses/infrastructure/create-inventory-gateway";
+import {createSqliteLocationUsage} from "./sqlite-location-usage";
 import { createStockCatalog } from "@core/catalog/infrastructure/stock-catalog";
 import Database from "better-sqlite3";
 import { runMigrations } from "../../../../electron/main/database/migrations";
@@ -8,6 +9,10 @@ import { createIdentity } from "../../identity/application/identity";
 import { Quantity } from "../../../shared/catalog/quantity";
 import { ConversionFactor } from "../../../shared/catalog/conversion";
 import { assertValidParent } from "../../catalog/domain/category-rules";
+import { createVerifiedSnapshot } from "../../../../electron/main/recovery";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 describe("inventory acceptance", () => {
   it("preserves precision, bounds and deep category ancestry", () => {
     expect(Quantity.parse("1.125", true).minor).toBe(1125n);
@@ -47,7 +52,10 @@ describe("inventory acceptance", () => {
         productType: "simple",
         allowDecimalQuantity: false,
       });
-      runMigrations(db);
+      const upgradeRoot=mkdtempSync(join(tmpdir(),"wms-inventory-upgrade-"));
+      try {
+        runMigrations(db, undefined, {beforeUpgrade:()=>{createVerifiedSnapshot(db,upgradeRoot,join(upgradeRoot,"backups"));}});
+      } finally { rmSync(upgradeRoot,{recursive:true,force:true}); }
       runMigrations(db);
       const identity = createIdentity(db);
       await identity.login(1, "user", "a long password", true);
@@ -55,7 +63,7 @@ describe("inventory acceptance", () => {
         inventory = createInventory(
           db,
           identity.authorize,
-          createStockCatalog(db),createWarehouseDirectory(db),jest.fn());
+          createStockCatalog(db),createInventoryWarehouseGateway(db,identity.authorize,createSqliteLocationUsage(db)),jest.fn());
       await identity.addOperator(1, "second", "another long password", [
         "clerk",
         "supervisor",

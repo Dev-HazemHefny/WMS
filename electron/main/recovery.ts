@@ -1,4 +1,4 @@
-import { runMigrations } from "./database/migrations";
+import { CURRENT_SCHEMA_VERSION, runMigrations, verifyDatabase } from "./database/migrations";
 import Database from "better-sqlite3";
 import { randomUUID, createHash } from "node:crypto";
 import {
@@ -10,6 +10,8 @@ import {
   writeFileSync,
   renameSync,
   unlinkSync,
+  mkdtempSync,
+  rmSync,
 } from "node:fs";
 import { join, dirname } from "node:path";
 const filename = "warehouse.sqlite";
@@ -38,24 +40,17 @@ function mediaPath(dir: string, key: string) {
   return join(media, key);
 }
 function verifyDb(db: Database.Database) {
-  const schema = db
-    .prepare("SELECT max(version) FROM schema_migrations")
-    .pluck()
-    .get() as number;
-  if (
-    !schema ||
-    schema > 6 ||
-    db.pragma("integrity_check", { simple: true }) !== "ok" ||
-    (db.pragma("foreign_key_check") as unknown[]).length
-  )
-    throw Error("Invalid database snapshot");
-  return schema;
+  return verifyDatabase(db);
 }
 function copyMedia(from: string, to: string, key: string) {
   const dest = mediaPath(to, key);
+  const source = mediaPath(from, key);
+  const expected = checksum(source);
   mkdirSync(dirname(dest), { recursive: true });
-  copyFileSync(mediaPath(from, key), dest);
-  return checksum(dest);
+  copyFileSync(source, dest);
+  const actual = checksum(dest);
+  if (actual !== expected) throw new Error("Media copy failed: " + key);
+  return actual;
 }
 export function snapshot(db: Database.Database, live: string, parent: string) {
   mkdirSync(parent, { recursive: true });
@@ -87,7 +82,8 @@ export function activeDirectory(root: string) {
   if (!existsSync(join(dir, filename))) throw Error("Active database missing");
   return dir;
 }
-export function stageRestore(source: string, root: string) {
+/** Copy and reopen a backup without running migrations on the verification copy. */
+function copyVerifiedBackup(source: string, dest: string): void {
   const manifest = JSON.parse(
     readFileSync(join(source, "manifest.json"), "utf8"),
   );
@@ -96,24 +92,50 @@ export function stageRestore(source: string, root: string) {
     checksum(join(source, filename)) !== manifest.database
   )
     throw Error("Invalid backup checksum");
-  const id = "dataset-" + randomUUID(),
-    dest = join(root, id);
-  mkdirSync(dest);
+  mkdirSync(dest, { recursive: true });
   const path = join(dest, filename);
   copyFileSync(join(source, filename), path);
   if (checksum(path) !== manifest.database) throw Error("Database copy failed");
-  const db = new Database(path);
+  const db = new Database(path, { readonly: true });
   try {
     if (verifyDb(db) !== manifest.schema) throw Error("Schema mismatch");
     for (const key of images(db))
       if (copyMedia(source, dest, key) !== manifest.files[key])
         throw Error("Invalid media checksum: " + key);
-    db.pragma("foreign_keys=ON");
-    runMigrations(db);
-    verifyDb(db);
   } finally {
     db.close();
   }
+}
+
+export function verifyRestorableSnapshot(source: string, verificationParent: string): void {
+  mkdirSync(verificationParent, { recursive: true });
+  const copy = mkdtempSync(join(verificationParent, "verify-"));
+  try {
+    copyVerifiedBackup(source, copy);
+  } finally {
+    // Only this function's newly allocated verification directory is removed.
+    rmSync(copy, { recursive: true, force: true });
+  }
+}
+
+export function createVerifiedSnapshot(db: Database.Database, live: string, parent: string): string {
+  const backup = snapshot(db, live, parent);
+  verifyRestorableSnapshot(backup, parent);
+  return backup;
+}
+
+export function stageRestore(source: string, root: string) {
+  const id = "dataset-" + randomUUID();
+  const dest = join(root, id);
+  copyVerifiedBackup(source, dest);
+  const db = new Database(join(dest, filename));
+  try {
+    db.pragma("foreign_keys=ON");
+    runMigrations(db, CURRENT_SCHEMA_VERSION, {
+      beforeUpgrade: () => { createVerifiedSnapshot(db, dest, join(dest, "backups")); },
+    });
+    verifyDb(db);
+  } finally { db.close(); }
   return id;
 }
 export function confirmStartup(root: string) {

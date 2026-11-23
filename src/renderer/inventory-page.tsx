@@ -1,14 +1,19 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import type { StockCommand, StockLine, StockResult } from "../shared/ipc/stock";
+import type { ResolvedLocationDto } from "../shared/warehouses/types";
+import { EXACT_COUNT_NOTICE, warehouseError } from "./warehouses/model";
+import { eligibleLocations, inventoryLocationLabel } from "./warehouses/inventory-locations";
 type Row = NonNullable<StockResult["rows"]>[number];
 const api = window.warehouse.inventory;
 export function InventoryPage() {
   const [items, setItems] = useState<Row[]>([]),
-    [places, setPlaces] = useState<Row[]>([]),
+    [places, setPlaces] = useState<ResolvedLocationDto[]>([]),
     [docs, setDocs] = useState<Row[]>([]),
     [result, setResult] = useState<Row[]>([]);
   const [message, setMessage] = useState(""),
     [busy, setBusy] = useState(false);
+  const [historical,setHistorical]=useState<Record<string,ResolvedLocationDto|null>>({});
   const [kind, setKind] = useState<"receipt" | "issue" | "transfer" | "count">(
       "receipt",
     ),
@@ -21,16 +26,29 @@ export function InventoryPage() {
   async function refresh() {
     const [i, p, d] = await Promise.all([
       api.execute({ op: "items" }),
-      api.execute({ op: "places" }),
+      window.warehouse.warehouses.locations.stockable(),
       api.execute({ op: "documents" }),
     ]);
     setItems(i.rows ?? []);
-    setPlaces(p.rows ?? []);
+    setPlaces(eligibleLocations(p));
+    setHistorical({});
     setDocs(d.rows ?? []);
   }
   useEffect(() => {
-    refresh().catch((e) => setMessage(String(e)));
+    refresh().catch((e) => setMessage(warehouseError(e)));
   }, []);
+  useEffect(()=>{
+    let active=true;
+    const ids=[...new Set([location,dest,...lines.flatMap(line=>[line.location,line.destination??""]),...result.flatMap(row=>[String(row.location??""),String(row.destination??"")])])]
+      .filter(id=>id&&!places.some(place=>place.location.id===id)&&historical[id]===undefined);
+    if(ids.length)void Promise.allSettled(ids.map(id=>window.warehouse.warehouses.locations.get({id}))).then(values=>{
+      if(!active)return;
+      const resolved:Record<string,ResolvedLocationDto|null>={};
+      values.forEach((value,index)=>{resolved[ids[index]]=value.status==="fulfilled"?value.value:null;if(value.status==="rejected")setMessage(warehouseError(value.reason));});
+      setHistorical(current=>({...current,...resolved}));
+    });
+    return ()=>{active=false;};
+  },[location,dest,lines,result,places,historical]);
   async function perform(fn: () => Promise<void>) {
     setBusy(true);
     setMessage("");
@@ -38,7 +56,7 @@ export function InventoryPage() {
       await fn();
       await refresh();
     } catch (e) {
-      setMessage(String(e));
+      setMessage(warehouseError(e));
     } finally {
       setBusy(false);
     }
@@ -57,7 +75,7 @@ export function InventoryPage() {
       return (raw<0n?"−":"")+(absolute/1000n).toString()+(decimal?"."+decimal:"");
     }
     if(key==="item")return String(items.find(i=>i.id===value)?.sku??value);
-    if(key==="location"||key==="destination")return String(places.find(p=>p.id===value)?.name??value);
+    if(key==="location"||key==="destination")return inventoryLocationLabel(String(value),places,historical);
     return String(value);
   }
   const labels:Record<string,string>={item:"الصنف",location:"الموقع",destination:"الوجهة",thousandths:"الكمية",expected:"المتوقع",counted:"الفعلي",qty:"الرصيد",ledger:"السجل",quantity:"الكمية المدخلة",document:"المستند",id:"المعرف",name:"الاسم",kind:"النوع",snapshot:"تفاصيل الحركة"};
@@ -72,42 +90,19 @@ export function InventoryPage() {
       </option>
     )),
   ];
+  const locationChoices=(selected:string)=>[
+    <option key="" value="">اختر موقعًا قابلًا للتخزين</option>,
+    ...places.map(place=><option key={place.location.id} value={place.location.id}>{inventoryLocationLabel(place.location.id,places,historical)}</option>),
+    ...(selected&&!places.some(place=>place.location.id===selected)?[<option key={selected} value={selected} disabled>{inventoryLocationLabel(selected,places,historical)}</option>]:[]),
+  ];
+  const sourceEligible=places.some(place=>place.location.id===location),destinationEligible=places.some(place=>place.location.id===dest);
   return (
-    <section dir="rtl">
-      <h2>عمليات المخزون</h2>
-      <p role="status">{message}</p>
+    <section dir="rtl" className="inventory-page">
+      <div className="page-title"><div><h2>عمليات المخزون</h2><p>الاستلام والصرف والتحويل والجرد، في مساحة عمل واحدة.</p></div></div>
+      {message && <p className="notice inventory-feedback" role="status">{message}</p>}
       <fieldset disabled={busy}>
-        <details>
-          <summary>الفروع والمخازن ومواقع التخزين</summary>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              const f = new FormData(e.currentTarget),
-                name = String(f.get("name")),
-                parent = String(f.get("parent"));
-              const op = f.get("type");
-              command(
-                op === "branch"
-                  ? { op, name }
-                  : op === "warehouse"
-                    ? { op, name, branch: parent }
-                    : { op: "location", name, warehouse: parent },
-              );
-            }}
-          >
-            <select name="type">
-              <option value="branch">فرع</option>
-              <option value="warehouse">مخزن</option>
-              <option value="location">موقع</option>
-            </select>
-            <input name="name" required placeholder="الاسم" />
-            <input name="parent" placeholder="معرّف الفرع أو المخزن" />
-            <button type="button" onClick={() => command({ op: "directory" })}>
-              عرض معرّفات الفروع والمخازن
-            </button>
-            <button>إضافة</button>
-          </form>
-        </details>
+        <div className="warehouse-toolbar"><Link className="button button-secondary" to="/branches">إدارة الفروع</Link><Link className="button button-secondary" to="/warehouses">إدارة المخازن ومواقع التخزين</Link><button onClick={()=>void perform(async()=>{})}>تحديث المواقع والمستندات</button></div>
+        <div className="inventory-entry">
         <label>
           العملية
           <select
@@ -125,19 +120,20 @@ export function InventoryPage() {
           </select>
         </label>
         <label>
-          الموقع
+          {kind==="transfer"?"الموقع المصدر":"الموقع"}
           <select
             value={location}
+            disabled={!!editing&&kind==="count"}
             onChange={(e) => setLocation(e.target.value)}
           >
-            {choices(places, "name")}
+            {locationChoices(location)}
           </select>
         </label>
         {kind === "transfer" && (
           <label>
-            الوجهة
+            الموقع الوجهة
             <select value={dest} onChange={(e) => setDest(e.target.value)}>
-              {choices(places, "name")}
+              {locationChoices(dest)}
             </select>
           </label>
         )}
@@ -152,7 +148,7 @@ export function InventoryPage() {
           <input value={qty} onChange={(e) => setQty(e.target.value)} />
         </label>
         <button
-          disabled={!item || !location || (kind==="count" && !editing)}
+          disabled={!item || !sourceEligible || (kind==="transfer"&&(!destinationEligible||location===dest)) || (kind==="count" && !editing)}
           onClick={() =>
             setLines([
               ...lines,
@@ -167,10 +163,13 @@ export function InventoryPage() {
         >
           إضافة سطر
         </button>
-        <ul>
+        </div>
+        {kind==="count"&&<p className="notice inventory-feedback">{EXACT_COUNT_NOTICE}</p>}
+        {location&&!sourceEligible&&<p className="notice notice-error">{inventoryLocationLabel(location,places,historical)}. أعد تفعيل الموقع من إدارة المخازن أو راجع المسودة. لم يُستبدل الموقع تلقائيًا.</p>}
+        <ul className="inventory-lines">
           {lines.map((l, i) => (
             <li key={i}>
-              {items.find((r) => r.id === l.item)?.sku ?? l.item} · {l.quantity}{" "}
+              <span>{items.find((r) => r.id === l.item)?.sku ?? l.item} · {l.quantity}<small className="warehouse-secondary">{inventoryLocationLabel(l.location,places,historical)}{l.destination&&` ← ${inventoryLocationLabel(l.destination,places,historical)}`}</small></span>
               <button onClick={() => setLines(lines.filter((_, j) => j !== i))}>
                 حذف
               </button>
@@ -178,6 +177,7 @@ export function InventoryPage() {
           ))}
         </ul>
         <button
+          disabled={!editing&&(kind==="count"?!sourceEligible:!lines.length)}
           onClick={() =>
             void perform(async () => {
               const r = await api.execute(
@@ -204,7 +204,8 @@ export function InventoryPage() {
               ? "بدء الجرد وقفل الموقع"
               : "حفظ مسودة"}
         </button>
-        <table>
+        {editing&&<button onClick={()=>{setEditing(null);setLines([]);}}>إغلاق تعديل المسودة</button>}
+        <div className="table-wrap inventory-documents"><table>
           <thead>
             <tr>
               <th>المستند</th>
@@ -214,6 +215,7 @@ export function InventoryPage() {
             </tr>
           </thead>
           <tbody>
+            {!docs.length && <tr><td colSpan={4} className="inventory-empty">لا توجد مستندات بعد. أنشئ مسودة لتسجيل أول حركة مخزنية.</td></tr>}
             {docs.map((d) => {
               const document = String(d.id),
                 version = Number(d.version);
@@ -228,9 +230,11 @@ export function InventoryPage() {
                       <button
                         onClick={() => {
                           setEditing(d);
-                          if(d.location)setLocation(String(d.location));
+                          const draftLines=JSON.parse(String(d.lines)) as StockLine[];
+                          setLocation(d.location?String(d.location):draftLines[0]?.location??"");
+                          setDest(draftLines[0]?.destination??"");
                           setKind(d.kind as typeof kind);
-                          setLines(JSON.parse(String(d.lines)));
+                          setLines(draftLines);
                         }}
                       >
                         تعديل
@@ -287,7 +291,7 @@ export function InventoryPage() {
               );
             })}
           </tbody>
-        </table>
+        </table></div>
         <button onClick={()=>{if(window.confirm("إنشاء نسخة احتياطية وإعادة احتساب الأرصدة من الحركات؟"))command({op:"rebuild"})}}>إعادة احتساب الأرصدة</button>
         <button onClick={() => command({ op: "balances" })}>الأرصدة</button>
         <button onClick={() => command({ op: "reconcile" })}>

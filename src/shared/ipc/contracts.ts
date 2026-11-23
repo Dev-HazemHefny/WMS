@@ -1,4 +1,6 @@
 import type { StockCommand, StockResult } from "./stock";
+import type { WarehouseManagementApi } from "../warehouses/types";
+import type { SessionCapabilities } from "../identity/types";
 import type {
   BarcodeLabel,
   BarcodeView,
@@ -24,7 +26,8 @@ export interface AppInfo {
 }
 
 export interface WarehouseApi {
-  identity:{ add(input:{name:string;password:string;roles:("admin"|"clerk"|"supervisor")[]}):Promise<void>; setupRequired():Promise<boolean>; login(input:{name:string;password:string;setup:boolean}):Promise<void>; logout():Promise<void> };
+  warehouses: WarehouseManagementApi;
+  identity:{ getCapabilities():Promise<SessionCapabilities>; add(input:{name:string;password:string;roles:("admin"|"clerk"|"supervisor")[]}):Promise<void>; setupRequired():Promise<boolean>; login(input:{name:string;password:string;setup:boolean}):Promise<void>; logout():Promise<void> };
   recovery:{backup():Promise<string|null>;restore():Promise<string|null>};
   inventory:{ execute(command:StockCommand):Promise<StockResult> };
   system: {

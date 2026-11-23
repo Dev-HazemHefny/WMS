@@ -2,6 +2,7 @@ import { randomBytes, randomUUID, scrypt, timingSafeEqual } from "node:crypto";
 import { promisify } from "node:util";
 import type Database from "better-sqlite3";
 import { AppError } from "../../shared/errors/app-error";
+import { SESSION_PERMISSIONS, type SessionCapabilities, type SessionPermission } from "../../../shared/identity/types";
 const derive = promisify(scrypt);
 export function createIdentity(db: Database.Database) {
   const sessions = new Map<number, string>();
@@ -27,6 +28,14 @@ export function createIdentity(db: Database.Database) {
   }
   function needsAdmin() {
     return !db.prepare("SELECT 1 FROM operators LIMIT 1").get();
+  }
+  function capabilities(window: number): SessionCapabilities {
+    const user = sessions.get(window);
+    if (!user) return { authenticated: false, permissions: [] };
+    const actions = db.prepare("SELECT DISTINCT p.action FROM operator_roles u JOIN permissions p ON p.role=u.role WHERE u.operator=? ORDER BY p.action")
+      .pluck().all(user) as string[];
+    const permissions = actions.filter((action): action is SessionPermission => SESSION_PERMISSIONS.some(allowed => allowed === action));
+    return { authenticated: true, permissions };
   }
   async function login(
     window: number,
@@ -91,6 +100,6 @@ export function createIdentity(db: Database.Database) {
       ).run(admin, id);
     })();
   }
-  return { actor, authorize, end, login, needsAdmin, addOperator };
+  return { actor, authorize, end, login, needsAdmin, addOperator, capabilities };
 }
 export type Identity = ReturnType<typeof createIdentity>;

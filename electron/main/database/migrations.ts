@@ -1,5 +1,8 @@
 import { architectureV2 } from "./architecture-v2";
 import Database from "better-sqlite3";
+import { phase3 } from "./phase3";
+
+export const CURRENT_SCHEMA_VERSION = 7;
 
 interface Migration {
   version: number;
@@ -212,43 +215,76 @@ const migrations: Migration[] = [
     `,
   },
   { version: 6, name: "architecture_v2", up: architectureV2 },
+  { version: 7, name: "warehouse_definitions", up: phase3 },
 ];
 
-// Earlier build provenance is unknown. Verify the required v6 definitions
-// before treating a v6 database as current, including constraint/trigger bodies.
-let v6Definitions: { name: string; sql: string }[] | undefined;
-function verifyV6(db: Database.Database): void {
-  if (!v6Definitions) {
+// Compare against the applied version, so ALTER TABLE in v7 does not invalidate
+// legitimate v7 databases on the next startup. Applied migration SQL is unchanged.
+const definitions = new Map<number, { name: string; sql: string }[]>();
+export function verifySchema(db: Database.Database): number {
+  if (!db.prepare("SELECT 1 FROM sqlite_schema WHERE name='schema_migrations'").get()) {
+    if (db.prepare("SELECT 1 FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%'").get()) {
+      throw new Error("Unversioned nonempty database");
+    }
+    return 0;
+  }
+  const history = db.prepare("SELECT version,name FROM schema_migrations ORDER BY version").all() as {version:number;name:string}[];
+  const version = history.at(-1)?.version ?? 0;
+  if (version > CURRENT_SCHEMA_VERSION) throw new Error("Unsupported newer database");
+  if (!version || history.length !== version || history.some((row,index) => row.version !== index+1 || row.name !== migrations[index]?.name)) {
+    throw new Error("Incompatible migration history");
+  }
+  if (!definitions.has(version)) {
     const reference = new Database(":memory:");
     try {
-      for (const migration of migrations.filter(m => m.version <= 6)) reference.exec(migration.up);
-      v6Definitions = reference.prepare(
+      reference.pragma("foreign_keys=ON");
+      for (const migration of migrations.filter(m => m.version <= version)) reference.exec(migration.up);
+      definitions.set(version, reference.prepare(
         "SELECT name, sql FROM sqlite_schema WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%'"
-      ).all() as { name: string; sql: string }[];
+      ).all() as { name: string; sql: string }[]);
     } finally { reference.close(); }
   }
   const definition = db.prepare("SELECT sql FROM sqlite_schema WHERE name=?").pluck();
-  for (const expected of v6Definitions) {
+  for (const expected of definitions.get(version)!) {
     if (definition.get(expected.name) !== expected.sql)
-      throw new Error("Incompatible schema v6: " + expected.name);
+      throw new Error(`Incompatible schema v${version}: ${expected.name}`);
   }
+  if (version >= 4 && db.prepare("SELECT value FROM app_metadata WHERE key='schema_version'").pluck().get() !== String(version)) {
+    throw new Error("Incompatible schema metadata");
+  }
+  return version;
+}
+
+export function verifyDatabase(db: Database.Database): number {
+  const version = verifySchema(db);
+  if (!version || db.pragma("integrity_check",{simple:true}) !== "ok" || (db.pragma("foreign_key_check") as unknown[]).length) {
+    throw new Error("Invalid database integrity or foreign keys");
+  }
+  if (version >= 7 && db.prepare(`SELECT w.id FROM warehouses w LEFT JOIN locations l ON l.warehouse=w.id AND l.is_default=1
+      GROUP BY w.id HAVING count(l.id)<>1 OR min(l.is_stockable)<>1 OR count(l.parent_id)<>0`).get()) {
+    throw new Error("Warehouse must have one stockable default root");
+  }
+  return version;
+}
+
+export interface UpgradeOptions {
+  /** Must create and verify a restorable, media-complete snapshot before returning. */
+  beforeUpgrade: () => void;
 }
 
 export function runMigrations(
   db: Database.Database,
-  targetVersion = migrations.length,
+  targetVersion = CURRENT_SCHEMA_VERSION,
+  options?: UpgradeOptions,
 ): void {
-  if (
-    db
-      .prepare("SELECT 1 FROM sqlite_master WHERE name='schema_migrations'")
-      .get() &&
-    db
-      .prepare("SELECT 1 FROM schema_migrations WHERE version > ?")
-      .get(migrations[migrations.length - 1].version)
-  )
-    throw new Error("Unsupported newer database");
-  if (db.prepare("SELECT 1 FROM sqlite_schema WHERE name='schema_migrations'").get() &&
-      db.prepare("SELECT 1 FROM schema_migrations WHERE version=6").get()) verifyV6(db);
+  if (!Number.isInteger(targetVersion) || targetVersion < 1 || targetVersion > CURRENT_SCHEMA_VERSION) throw new Error("Unsupported migration target");
+  const initialVersion = verifySchema(db);
+  if (initialVersion) verifyDatabase(db);
+  if (initialVersion && initialVersion < 7 && targetVersion >= 7) {
+    if (!options) throw new Error("Verified upgrade backup required");
+    options.beforeUpgrade();
+  }
+  db.pragma("foreign_keys=ON");
   db.exec(migrations[0].up);
 
   const getApplied = db.prepare(
@@ -272,8 +308,16 @@ export function runMigrations(
           .get() as { id: string } | undefined;
         if (invalid) throw new Error("Invalid catalog owner: " + invalid.id);
       }
+      if (migration.version === 7) {
+        for (const table of ["branches", "warehouses", "locations"]) {
+          if (db.prepare(`SELECT 1 FROM ${table} WHERE id IS NULL OR length(trim(id))=0`).get()) {
+            throw new Error("Invalid historical identity: " + table);
+          }
+        }
+      }
       db.exec(migration.up);
       insertApplied.run(migration.version, migration.name);
+      if (migration.version === 7) verifyDatabase(db);
     });
     apply();
   }

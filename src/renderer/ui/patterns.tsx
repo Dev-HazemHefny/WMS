@@ -1,4 +1,4 @@
-import type { FormEvent, ReactNode } from "react";
+import { useEffect, useId, useRef, type FormEvent, type ReactNode } from "react";
 import type { Page, RecordStatus } from "../../shared/catalog/types";
 import { Button, EmptyState, LoadingState, Notice } from "./primitives";
 
@@ -152,6 +152,26 @@ export function Dialog(props: {
   submitDisabled?: boolean;
   closeOnBackdrop?: boolean;
 }) {
+  const form = useRef<HTMLFormElement>(null);
+  const titleId = useId();
+  const close = useRef(props.onClose);
+  close.current = props.onClose;
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    const element = form.current!;
+    const controls = () => Array.from(element.querySelectorAll<HTMLElement>('input:not(:disabled),select:not(:disabled),textarea:not(:disabled),button:not(:disabled),a[href],[tabindex="0"]')).filter(node => !node.hidden && node.getClientRects().length > 0);
+    (controls()[0] ?? element).focus();
+    const keydown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); close.current?.(); }
+      if (event.key !== "Tab") return;
+      const nodes = controls(), first = nodes[0], last = nodes[nodes.length - 1];
+      if (!first) { event.preventDefault(); element.focus(); }
+      else if (event.shiftKey && (document.activeElement === first || document.activeElement === element)) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    };
+    element.addEventListener("keydown", keydown);
+    return () => { element.removeEventListener("keydown",keydown); if (previous?.isConnected) previous.focus(); };
+  }, []);
   return (
     <div
       className="dialog-backdrop"
@@ -164,8 +184,8 @@ export function Dialog(props: {
           : undefined
       }
     >
-      <form className="dialog form-grid" onSubmit={props.onSubmit}>
-        <h3>{props.title}</h3>
+      <form ref={form} className="dialog form-grid" onSubmit={props.onSubmit} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}>
+        <h3 id={titleId}>{props.title}</h3>
         {props.error && <Notice kind="error">{props.error}</Notice>}
         {props.children}
         <div className="dialog-actions">

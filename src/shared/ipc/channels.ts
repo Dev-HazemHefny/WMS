@@ -1,4 +1,20 @@
 export const IPC_CHANNELS = {
+  identity: { capabilities: "identity:capabilities" },
+  warehouses: {
+    branches: {
+      create: "warehouses:branches:create", update: "warehouses:branches:update", list: "warehouses:branches:list",
+      get: "warehouses:branches:get", listWarehouses: "warehouses:branches:listWarehouses", setStatus: "warehouses:branches:setStatus",
+    },
+    warehouses: {
+      create: "warehouses:warehouses:create", update: "warehouses:warehouses:update", list: "warehouses:warehouses:list",
+      get: "warehouses:warehouses:get", reassign: "warehouses:warehouses:reassign", setStatus: "warehouses:warehouses:setStatus",
+    },
+    locations: {
+      create: "warehouses:locations:create", update: "warehouses:locations:update", list: "warehouses:locations:list",
+      get: "warehouses:locations:get", tree: "warehouses:locations:tree", path: "warehouses:locations:path",
+      stockable: "warehouses:locations:stockable", reparent: "warehouses:locations:reparent", setStatus: "warehouses:locations:setStatus",
+    },
+  },
   system: {
     getAppInfo: "system:get-app-info"
   },

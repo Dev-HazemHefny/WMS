@@ -20,6 +20,8 @@ import type {
 } from "../../src/shared/catalog/types";
 import { ClientError } from "../../src/shared/ipc/client-error";
 import type { IpcResult } from "../../src/shared/ipc/result";
+import type { BranchDto, BranchDetailsDto, WarehouseDto, WarehouseDetailsDto, StorageLocationDto, ResolvedLocationDto, LocationPathDto, DefinitionPageDto } from "../../src/shared/warehouses/types";
+import type { SessionCapabilities } from "../../src/shared/identity/types";
 
 async function invoke<T>(channel: string, args?: unknown): Promise<T> {
   const result: IpcResult<T> = await ipcRenderer.invoke(channel, args);
@@ -28,7 +30,37 @@ async function invoke<T>(channel: string, args?: unknown): Promise<T> {
 }
 
 const warehouseApi: WarehouseApi = {
+  warehouses: {
+    branches: {
+      create: input => invoke<BranchDto>(IPC_CHANNELS.warehouses.branches.create,input),
+      update: input => invoke<BranchDto>(IPC_CHANNELS.warehouses.branches.update,input),
+      list: input => invoke<DefinitionPageDto<BranchDto>>(IPC_CHANNELS.warehouses.branches.list,input),
+      get: input => invoke<BranchDetailsDto>(IPC_CHANNELS.warehouses.branches.get,input),
+      listWarehouses: input => invoke<readonly WarehouseDto[]>(IPC_CHANNELS.warehouses.branches.listWarehouses,input),
+      setStatus: input => invoke<BranchDto>(IPC_CHANNELS.warehouses.branches.setStatus,input),
+    },
+    warehouses: {
+      create: input => invoke<WarehouseDto>(IPC_CHANNELS.warehouses.warehouses.create,input),
+      update: input => invoke<WarehouseDto>(IPC_CHANNELS.warehouses.warehouses.update,input),
+      list: input => invoke<DefinitionPageDto<WarehouseDto>>(IPC_CHANNELS.warehouses.warehouses.list,input),
+      get: input => invoke<WarehouseDetailsDto>(IPC_CHANNELS.warehouses.warehouses.get,input),
+      reassign: input => invoke<WarehouseDto>(IPC_CHANNELS.warehouses.warehouses.reassign,input),
+      setStatus: input => invoke<WarehouseDto>(IPC_CHANNELS.warehouses.warehouses.setStatus,input),
+    },
+    locations: {
+      create: input => invoke<StorageLocationDto>(IPC_CHANNELS.warehouses.locations.create,input),
+      update: input => invoke<StorageLocationDto>(IPC_CHANNELS.warehouses.locations.update,input),
+      list: input => invoke<DefinitionPageDto<StorageLocationDto>>(IPC_CHANNELS.warehouses.locations.list,input),
+      get: input => invoke<ResolvedLocationDto>(IPC_CHANNELS.warehouses.locations.get,input),
+      tree: input => invoke<readonly StorageLocationDto[]>(IPC_CHANNELS.warehouses.locations.tree,input),
+      path: input => invoke<readonly LocationPathDto[]>(IPC_CHANNELS.warehouses.locations.path,input),
+      stockable: input => invoke<readonly ResolvedLocationDto[]>(IPC_CHANNELS.warehouses.locations.stockable,input),
+      reparent: input => invoke<StorageLocationDto>(IPC_CHANNELS.warehouses.locations.reparent,input),
+      setStatus: input => invoke<StorageLocationDto>(IPC_CHANNELS.warehouses.locations.setStatus,input),
+    },
+  },
   identity: {
+    getCapabilities: () => invoke<SessionCapabilities>(IPC_CHANNELS.identity.capabilities),
     add: (i) => invoke("identity:add", i),
     setupRequired: () => invoke("identity:setup"),
     login: (input) => invoke("identity:login", input),
