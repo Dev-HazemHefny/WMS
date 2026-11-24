@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { ResolvedLocationDto, StorageLocationDto } from "../../shared/warehouses/types";
 import { ClientError } from "../../shared/ipc/client-error";
 import { EXACT_COUNT_NOTICE, failureCode, locationLabel, validParent, visibleLocations, warehouseError } from "./model";
-import { eligibleLocations, inventoryLocationLabel } from "./inventory-locations";
+import { eligibleLocations, historicalLocationLabel, indexInventoryLocations, inventoryLocationLabel } from "./inventory-locations";
 import { DefinitionFields, ReadAccess } from "./shared";
 import { SessionContext } from "../session-context";
 import { Dialog } from "../ui";
@@ -40,9 +40,37 @@ it("excludes organizational and unavailable locations from new Inventory operati
 });
 it("keeps full warehouse/path labels and historical identities without selecting replacements",()=>{
   expect(locationLabel(resolved)).toBe("المخزن · منطقة / خانة");
-  expect(inventoryLocationLabel("child",[resolved],{})).toBe(locationLabel(resolved));
-  expect(inventoryLocationLabel("child",[],{child:{...resolved,effectiveActive:false}})).toContain("المخزن · منطقة / خانة — غير متاح");
-  expect(inventoryLocationLabel("missing",[],{})).toContain("missing");
+  const { labels } = indexInventoryLocations([resolved]);
+  const historical = new Map([
+    ["child", historicalLocationLabel({ ...resolved, effectiveActive: false })],
+    ["missing", null],
+  ]);
+  expect(inventoryLocationLabel("child", labels, historical)).toBe(locationLabel(resolved));
+  expect(inventoryLocationLabel("child", new Map(), historical)).toBe("المخزن · منطقة / خانة — غير متاح لعملية جديدة");
+  expect(inventoryLocationLabel("missing", labels, historical)).toBe("موقع غير متاح حاليًا (missing)");
+  expect(inventoryLocationLabel("constructor", labels, historical)).toBe("موقع غير متاح حاليًا (constructor)");
+});
+it("preserves option order and the first label for duplicate location IDs", () => {
+  const other = { ...resolved, location: node("other"), path: [{ id: "other", code: "O", name: "Other" }] };
+  const duplicate = { ...other, location: resolved.location };
+  const { labels, options } = indexInventoryLocations([other, resolved, duplicate]);
+  expect(options).toEqual([
+    { id: "other", label: "المخزن · Other" },
+    { id: "child", label: "المخزن · منطقة / خانة" },
+    { id: "child", label: "المخزن · منطقة / خانة" },
+  ]);
+  expect(labels.get("child")).toBe("المخزن · منطقة / خانة");
+});
+it("indexes each of 2,400 eligible location IDs once during option preparation", () => {
+  let reads = 0;
+  const locations = Array.from({ length: 2400 }, (_, i) => ({
+    ...resolved,
+    location: { ...resolved.location, get id() { reads++; return String(i); } },
+  }));
+  const { labels, options } = indexInventoryLocations(locations);
+  expect(options).toHaveLength(2400);
+  expect(labels.size).toBe(2400);
+  expect(reads).toBe(2400);
 });
 it("detects version/permission failures after Electron drops custom Error properties",()=>{
   expect(failureCode(new Error("تم تعديل البيانات، أعد تحميلها أولًا"))).toBe("VERSION_CONFLICT");

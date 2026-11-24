@@ -3,8 +3,8 @@ import Database from "better-sqlite3";
 import { ipcMain, type IpcMainInvokeEvent } from "electron";
 import { registerIpcHandlers } from "./index";
 import { trustWindow, forgetWindow } from "./dispatch";
-import { runMigrations, verifyDatabase } from "../database/migrations";
-import { createIdentity } from "@core/identity/application/identity";
+import { CURRENT_SCHEMA_VERSION, runMigrations, verifyDatabase } from "../database/migrations";
+import { createSqliteIdentity } from "@core/identity/infrastructure/create-sqlite-identity";
 import { createSqliteCatalog } from "@core/catalog/infrastructure/create-sqlite-catalog";
 import * as factory from "@core/warehouses/infrastructure/create-sqlite-warehouses";
 import { createSqliteLocationUsage } from "@core/inventory/infrastructure/sqlite-location-usage";
@@ -18,7 +18,7 @@ const C=IPC_CHANNELS.warehouses;
 const channels=Object.values(C).flatMap(group=>Object.values(group));
 const mutations=channels.filter(channel=>/:(create|update|setStatus|reparent|reassign)$/.test(channel));
 const reads=channels.filter(channel=>!mutations.includes(channel));
-let db:Database.Database,identity:ReturnType<typeof createIdentity>,catalog:ReturnType<typeof createSqliteCatalog>;
+let db:Database.Database,identity:ReturnType<typeof createSqliteIdentity>,catalog:ReturnType<typeof createSqliteCatalog>;
 let branch:BranchDto,warehouse:WarehouseDto,location:StorageLocationDto,item:string;
 let handlers:Map<string,(event:IpcMainInvokeEvent,input:unknown)=>unknown>;
 const frame={url:"file:///qa/index.html"};
@@ -62,7 +62,7 @@ beforeEach(async()=>{
   jest.mocked(ipcMain.handle).mockClear();
   jest.spyOn(console,"info").mockImplementation(()=>{});
   db=new Database(":memory:");runMigrations(db);
-  identity=createIdentity(db);await identity.login(71,"admin","test-password-123",true);
+  identity=createSqliteIdentity(db);await identity.login(71,"admin","test-password-123",true);
   const services=factory.createSqliteWarehouses(db,{usage:createSqliteLocationUsage(db),access:{currentActor:()=>identity.actor(71),authorize:identity.authorize}});
   branch=services.createBranch({code:"BR",name:"Branch"});
   warehouse=services.createWarehouse({branchId:branch.id,code:"WH",name:"Warehouse"});
@@ -76,7 +76,7 @@ beforeEach(async()=>{
 });
 afterEach(()=>{
   forgetWindow(71);forgetWindow(72);jest.restoreAllMocks();
-  try{expect(verifyDatabase(db)).toBe(7);expect(db.pragma("foreign_key_check")).toEqual([]);expect(db.pragma("integrity_check",{simple:true})).toBe("ok");}finally{db.close();}
+  try{expect(verifyDatabase(db)).toBe(CURRENT_SCHEMA_VERSION);expect(db.pragma("foreign_key_check")).toEqual([]);expect(db.pragma("integrity_check",{simple:true})).toBe("ok");}finally{db.close();}
 });
 
 it("registers every dedicated channel exactly once",()=>{

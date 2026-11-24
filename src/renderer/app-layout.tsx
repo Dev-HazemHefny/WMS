@@ -1,13 +1,14 @@
 import { useEffect, useState } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import type { AppInfo } from "../shared/ipc/contracts";
-import { navigation } from "./navigation";
+import { navigation, useVisibleNavigation } from "./navigation";
 import { Notice, errorMessage } from "./ui";
 
 export function AppLayout() {
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [appError, setAppError] = useState<string | null>(null);
   const location = useLocation();
+  const visibleNavigation = useVisibleNavigation();
 
   useEffect(() => {
     let active = true;
@@ -29,7 +30,7 @@ export function AppLayout() {
       </Link>
       <div className="nav-caption">القائمة الرئيسية</div>
       <nav className="side-nav" aria-label="القائمة الرئيسية">
-        {navigation.map((item) => { const Icon = item.icon; return <NavLink key={item.to} to={item.to} end={item.end}
+        {visibleNavigation.map((item) => { const Icon = item.icon; return <NavLink key={item.to} to={item.to} end={item.end}
           className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}>
           <Icon size={19} strokeWidth={1.7} aria-hidden="true" />{item.label}
         </NavLink>})}

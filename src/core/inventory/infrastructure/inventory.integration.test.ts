@@ -5,7 +5,7 @@ import Database from "better-sqlite3";
 import { runMigrations } from "../../../../electron/main/database/migrations";
 import { createSqliteCatalog } from "../../catalog/infrastructure/create-sqlite-catalog";
 import { createInventory } from "./sqlite-inventory";
-import { createIdentity } from "../../identity/application/identity";
+import { createSqliteIdentity } from "../../identity/infrastructure/create-sqlite-identity";
 import { Quantity } from "../../../shared/catalog/quantity";
 import { ConversionFactor } from "../../../shared/catalog/conversion";
 import { assertValidParent } from "../../catalog/domain/category-rules";
@@ -57,7 +57,7 @@ describe("inventory acceptance", () => {
         runMigrations(db, undefined, {beforeUpgrade:()=>{createVerifiedSnapshot(db,upgradeRoot,join(upgradeRoot,"backups"));}});
       } finally { rmSync(upgradeRoot,{recursive:true,force:true}); }
       runMigrations(db);
-      const identity = createIdentity(db);
+      const identity = createSqliteIdentity(db);
       await identity.login(1, "user", "a long password", true);
       const user = identity.actor(1),
         inventory = createInventory(

@@ -44,22 +44,28 @@ export function defaultStockable(type: LocationType): boolean {
 
 /** Root-first ancestry including the selected node; iterative, with no depth cap. */
 export function locationPath(id: string, locations: readonly StorageLocation[]): StorageLocation[] {
+  return createLocationPathResolver(locations)(id);
+}
+
+export function createLocationPathResolver(locations: readonly StorageLocation[]): (id: string) => StorageLocation[] {
   const byId = new Map(locations.map(location => [location.id, location]));
-  const seen = new Set<string>();
-  const path: StorageLocation[] = [];
-  let currentId: string | null = id;
-  while (currentId !== null) {
-    if (seen.has(currentId)) reject("LOCATION_CYCLE", "لا يمكن إنشاء علاقة دائرية بين المواقع");
-    const current = byId.get(currentId);
-    if (!current) reject("LOCATION_NOT_FOUND", "موقع التخزين غير موجود");
-    if (path.length && current.warehouseId !== path[0].warehouseId) {
-      reject("PARENT_WAREHOUSE_MISMATCH", "الموقع الأب يجب أن يتبع نفس المخزن");
+  return id => {
+    const seen = new Set<string>();
+    const path: StorageLocation[] = [];
+    let currentId: string | null = id;
+    while (currentId !== null) {
+      if (seen.has(currentId)) reject("LOCATION_CYCLE", "لا يمكن إنشاء علاقة دائرية بين المواقع");
+      const current = byId.get(currentId);
+      if (!current) reject("LOCATION_NOT_FOUND", "موقع التخزين غير موجود");
+      if (path.length && current.warehouseId !== path[0].warehouseId) {
+        reject("PARENT_WAREHOUSE_MISMATCH", "الموقع الأب يجب أن يتبع نفس المخزن");
+      }
+      seen.add(currentId);
+      path.push(current);
+      currentId = current.parentId;
     }
-    seen.add(currentId);
-    path.push(current);
-    currentId = current.parentId;
-  }
-  return path.reverse();
+    return path.reverse();
+  };
 }
 
 export function locationSubtree(id: string, locations: readonly StorageLocation[]): StorageLocation[] {

@@ -4,9 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { initializeDatabase, closeDatabase } from "./index";
-import { runMigrations } from "./migrations";
+import { CURRENT_SCHEMA_VERSION, runMigrations } from "./migrations";
 import { activate, activeDirectory, confirmStartup, snapshot, stageRestore } from "../recovery";
-import { createIdentity } from "@core/identity/application/identity";
+import { createSqliteIdentity } from "@core/identity/infrastructure/create-sqlite-identity";
 import { createInventory } from "@core/inventory/infrastructure/sqlite-inventory";
 import { createSqliteCatalog } from "@core/catalog/infrastructure/create-sqlite-catalog";
 import { createStockCatalog } from "@core/catalog/infrastructure/stock-catalog";
@@ -15,10 +15,10 @@ import { createSqliteLocationUsage } from "@core/inventory/infrastructure/sqlite
 import type { StockCommand } from "@shared/ipc/stock";
 
 let root:string, db:Database.Database, item:string, a:string, b:string;
-let identity:ReturnType<typeof createIdentity>, execute:ReturnType<typeof createInventory>;
+let identity:ReturnType<typeof createSqliteIdentity>, execute:ReturnType<typeof createInventory>;
 function open(){
   db=initializeDatabase(root);
-  identity=createIdentity(db);
+  identity=createSqliteIdentity(db);
   execute=createInventory(db,identity.authorize,createStockCatalog(db),createInventoryWarehouseGateway(db,identity.authorize,createSqliteLocationUsage(db)),()=>{throw Error("backup unavailable")});
 }
 const cmd=(input:StockCommand)=>execute(identity.actor(1),input);
@@ -116,7 +116,7 @@ it("retains count locks across restart and enforces switched operator permission
 it("rejects an incompatible current database before accepting writes",()=>{
   db.exec("DROP TRIGGER immutable_movement");
   closeDatabase();
-  expect(()=>initializeDatabase(root)).toThrow(/incompatible.*7/i);
+  expect(()=>initializeDatabase(root)).toThrow(`Incompatible schema v${CURRENT_SCHEMA_VERSION}: immutable_movement`);
 });
 it("rejects future schemas without altering their migration records",()=>{
   db.prepare("INSERT INTO schema_migrations(version,name) VALUES(99,'future')").run();
@@ -143,7 +143,7 @@ it("reopens the restored dataset with its original stock, receipt, barcode and o
   closeDatabase();
   activate(root,staged);
   db=initializeDatabase(activeDirectory(root));
-  const restoredIdentity=createIdentity(db);
+  const restoredIdentity=createSqliteIdentity(db);
   await restoredIdentity.login(1,"admin","test-password-123",false);
   const stockCatalog=createStockCatalog(db);
   const stock=createInventory(db,restoredIdentity.authorize,stockCatalog,createInventoryWarehouseGateway(db,restoredIdentity.authorize,createSqliteLocationUsage(db)),()=>{throw Error("unexpected repair")});

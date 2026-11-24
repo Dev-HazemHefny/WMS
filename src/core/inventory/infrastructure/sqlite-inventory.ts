@@ -9,6 +9,7 @@ import {
   type StockResult,
 } from "../../../shared/ipc/stock";
 import { AppError } from "../../shared/errors/app-error";
+import { createSqliteInventoryLedger } from "./sqlite-inventory-ledger";
 
 type Document = {
   id: string;
@@ -50,6 +51,7 @@ export function createInventory(
   warehouses: InventoryWarehouseGateway,
   backupBeforeRepair: ()=>void,
 ) {
+  const ledger = createSqliteInventoryLedger(db);
   const run = (sql: string, ...args: unknown[]) => db.prepare(sql).run(...args);
   const get = <T>(sql: string, ...args: unknown[]) =>
     db.prepare(sql).get(...args) as T | undefined;
@@ -148,56 +150,25 @@ export function createInventory(
         };
       case "history":
         return {
-          rows: rows(
-            "SELECT document,location,CAST(delta AS TEXT) thousandths,snapshot FROM movements WHERE item=? ORDER BY id DESC LIMIT 200",
-            cmd.item,
-          ),
+          rows: ledger.listMovements({ itemId: cmd.item, limit: 200 })
+            .map(({ documentId, locationId, delta, snapshot }) => ({
+              document: documentId, location: locationId, thousandths: delta.toString(), snapshot,
+            })),
         };
-      case "rebuild":
-      case "reconcile": {
-        const totals = new Map<string, bigint>();
-        for (const m of db
-          .prepare("SELECT item,location,delta FROM movements")
-          .safeIntegers()
-          .iterate() as Iterable<{
-          item: string;
-          location: string;
-          delta: bigint;
-        }>) {
-          const k = JSON.stringify([m.item, m.location]);
-          totals.set(k, (totals.get(k) ?? 0n) + m.delta);
+      case "reconcile":
+        return { rows: ledger.findDiscrepancies().map(({ itemId, locationId, onHand, ledger }) => ({
+          item: itemId, location: locationId, qty: onHand?.toString() ?? null, ledger: ledger?.toString() ?? null,
+        })) };
+      case "rebuild": {
+        const totals = ledger.ledgerTotals();
+        if (get("SELECT 1 FROM count_locks LIMIT 1")) fail("LOCATION_LOCKED");
+        run("DELETE FROM balances");
+        for (const { itemId, locationId, ledger } of totals.values()) {
+          if (ledger < 0n || ledger > 9223372036854775807n) fail("INVALID_LEDGER");
+          run("INSERT INTO balances VALUES(?,?,?)", itemId, locationId, ledger);
         }
-        if(cmd.op==="rebuild"){
-          if(get("SELECT 1 FROM count_locks LIMIT 1"))fail("LOCATION_LOCKED");
-          run("DELETE FROM balances");
-          for(const [key,value] of totals){
-            if(value<0n||value>9223372036854775807n)fail("INVALID_LEDGER");
-            const [item,location]=JSON.parse(key);run("INSERT INTO balances VALUES(?,?,?)",item,location,value);
-          }
-          audit(actor,"rebuild","balances");return {rows:[]};
-        }
-        const differences: NonNullable<StockResult["rows"]> = [];
-        for (const b of rows(
-          "SELECT item,location,CAST(qty AS TEXT) qty FROM balances",
-        )) {
-          const k = JSON.stringify([b.item, b.location]);
-          if (totals.get(k) !== BigInt(String(b.qty)))
-            differences.push({
-              ...b,
-              ledger: totals.get(k)?.toString() ?? null,
-            });
-          totals.delete(k);
-        }
-        for (const [k, total] of totals) {
-          const [item, location] = JSON.parse(k);
-          differences.push({
-            item,
-            location,
-            qty: null,
-            ledger: total.toString(),
-          });
-        }
-        return { rows: differences };
+        audit(actor, "rebuild", "balances");
+        return { rows: [] };
       }
       case "details": {
         const doc=lookup(cmd.document);

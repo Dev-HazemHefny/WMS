@@ -15,6 +15,7 @@ import {
 } from "../../domain/product-rules";
 import type { StoredVariant } from "../../domain/repositories";
 import { parseAttributes, parseOptionalText, parseRequiredText, parseSku } from "../../domain/values";
+import { replaceCatalogImage } from "../catalog-media";
 import { linkedPackaging, type ProductContext } from "./context";
 
 export function createProductCrudUseCases(ctx: ProductContext) {
@@ -25,7 +26,6 @@ export function createProductCrudUseCases(ctx: ProductContext) {
     requireActiveUnit,
     requireActiveBrand,
     reserveSku,
-    saveImage,
     details,
     insertPackaging,
     insertBarcode
@@ -79,66 +79,60 @@ export function createProductCrudUseCases(ctx: ProductContext) {
         signatures.add(variant.attributes.signature);
       }
       const id = deps.ids.next();
-      let imagePath: string | null = null;
-      try {
-        imagePath = saveImage(input.imageDataUrl, id, null);
-        deps.uow.run(() => {
-          const now = deps.clock.nowIso();
-          const product: Product = {
-            id,
-            name,
-            sku,
-            categoryId: input.categoryId,
-            baseUnitId: input.baseUnitId,
-            description,
-            imagePath,
-            brandId: input.brandId ?? null,
-            productType: input.productType,
-            allowDecimalQuantity: input.allowDecimalQuantity,
+      deps.uow.run(effects => {
+        const imagePath = replaceCatalogImage(deps, effects, "products", input.imageDataUrl || null, null);
+        const now = deps.clock.nowIso();
+        const product: Product = {
+          id,
+          name,
+          sku,
+          categoryId: input.categoryId,
+          baseUnitId: input.baseUnitId,
+          description,
+          imagePath,
+          brandId: input.brandId ?? null,
+          productType: input.productType,
+          allowDecimalQuantity: input.allowDecimalQuantity,
+          status: "active",
+          createdAt: now,
+          updatedAt: now
+        };
+        deps.products.insert(product);
+        const packagingByUnit = new Map<string, string>();
+        for (const item of packaging) {
+          const created = insertPackaging("product", id, item.unitId, item.conversionFactor, product, product.baseUnitId);
+          packagingByUnit.set(item.unitId, created.id);
+        }
+        for (const item of barcodes) {
+          insertBarcode(item.code, product, null, linkedPackaging(item.packagingUnitId, packagingByUnit));
+        }
+        for (const variant of preparedVariants) {
+          const baseUnitId = variant.baseUnitId ?? product.baseUnitId;
+          requireActiveUnit(baseUnitId);
+          const variantId = deps.ids.next();
+          const stored: StoredVariant = {
+            id: variantId,
+            productId: id,
+            sku: variant.sku,
+            name: variant.name,
+            baseUnitId,
+            attributesSignature: variant.attributes.signature,
             status: "active",
             createdAt: now,
-            updatedAt: now
+            updatedAt: now,
+            attributes: variant.attributes.items.map((item) => ({ id: deps.ids.next(), ...item }))
           };
-          deps.products.insert(product);
-          const packagingByUnit = new Map<string, string>();
-          for (const item of packaging) {
-            const created = insertPackaging("product", id, item.unitId, item.conversionFactor, product, product.baseUnitId);
-            packagingByUnit.set(item.unitId, created.id);
+          deps.variants.insert(stored);
+          const variantPackaging = new Map<string, string>();
+          for (const item of variant.packaging ?? []) {
+            const created = insertPackaging("variant", variantId, item.unitId, item.conversionFactor, product, baseUnitId);
+            variantPackaging.set(item.unitId, created.id);
           }
-          for (const item of barcodes) {
-            insertBarcode(item.code, product, null, linkedPackaging(item.packagingUnitId, packagingByUnit));
+          for (const item of variant.barcodes ?? []) {
+            insertBarcode(item.code, product, variantId, linkedPackaging(item.packagingUnitId, variantPackaging));
           }
-          for (const variant of preparedVariants) {
-            const baseUnitId = variant.baseUnitId ?? product.baseUnitId;
-            requireActiveUnit(baseUnitId);
-            const variantId = deps.ids.next();
-            const stored: StoredVariant = {
-              id: variantId,
-              productId: id,
-              sku: variant.sku,
-              name: variant.name,
-              baseUnitId,
-              attributesSignature: variant.attributes.signature,
-              status: "active",
-              createdAt: now,
-              updatedAt: now,
-              attributes: variant.attributes.items.map((item) => ({ id: deps.ids.next(), ...item }))
-            };
-            deps.variants.insert(stored);
-            const variantPackaging = new Map<string, string>();
-            for (const item of variant.packaging ?? []) {
-              const created = insertPackaging("variant", variantId, item.unitId, item.conversionFactor, product, baseUnitId);
-              variantPackaging.set(item.unitId, created.id);
-            }
-            for (const item of variant.barcodes ?? []) {
-              insertBarcode(item.code, product, variantId, linkedPackaging(item.packagingUnitId, variantPackaging));
-            }
-          }
-        });
-      } catch (error) {
-        if (imagePath) deps.images.remove(imagePath);
-        throw error;
-      }
+        }
+      });
       return details(id);
     },
     updateProduct(id: string, input: ProductInput): ProductDetails {
@@ -179,26 +173,24 @@ export function createProductCrudUseCases(ctx: ProductContext) {
       if (!input.allowDecimalQuantity && deps.packaging.hasFractionalForProduct(id)) {
         throw new DomainError("FRACTIONAL_FACTOR", "لا يمكن منع الكميات العشرية لوجود عوامل تحويل كسرية");
       }
-      const imagePath = saveImage(input.imageDataUrl, id, current.imagePath);
-      const product: Product = {
-        ...current,
-        name,
-        sku,
-        categoryId: input.categoryId,
-        baseUnitId: input.baseUnitId,
-        description,
-        imagePath,
-        brandId,
-        productType: input.productType,
-        allowDecimalQuantity: input.allowDecimalQuantity,
-        updatedAt: deps.clock.nowIso()
-      };
-      try {
+      deps.uow.run(effects => {
+        const imageDataUrl = input.imageDataUrl === "" ? null : input.imageDataUrl;
+        const imagePath = replaceCatalogImage(deps, effects, "products", imageDataUrl, current.imagePath);
+        const product: Product = {
+          ...current,
+          name,
+          sku,
+          categoryId: input.categoryId,
+          baseUnitId: input.baseUnitId,
+          description,
+          imagePath,
+          brandId,
+          productType: input.productType,
+          allowDecimalQuantity: input.allowDecimalQuantity,
+          updatedAt: deps.clock.nowIso()
+        };
         deps.products.update(product);
-      } catch (error) {
-        if (imagePath && imagePath !== current.imagePath) deps.images.remove(imagePath);
-        throw error;
-      }
+      });
       return details(id);
     },
     activateProduct(id: string): Product {
@@ -222,8 +214,10 @@ export function createProductCrudUseCases(ctx: ProductContext) {
         dependents.variants + dependents.barcodes + dependents.packaging,
         "لا يمكن حذف الصنف لوجود متغيرات أو باركود أو وحدات تعبئة مرتبطة به. يمكنك تعطيله بدلًا من ذلك."
       );
-      deps.products.delete(id);
-      if (current.imagePath) deps.images.remove(current.imagePath);
+      deps.uow.run(effects => {
+        deps.products.delete(id);
+        replaceCatalogImage(deps, effects, "products", null, current.imagePath);
+      });
     }
   };
 }

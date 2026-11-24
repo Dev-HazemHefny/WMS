@@ -6,8 +6,13 @@ export interface IdGenerator {
   next(): string;
 }
 
+export interface TransactionEffects {
+  onCommit(cleanup: () => void): void;
+  onRollback(cleanup: () => void): void;
+}
+
 export interface UnitOfWork {
-  run<T>(work: () => T): T;
+  run<T>(work: (effects: TransactionEffects) => T): T;
 }
 
 export interface ImageStorage {

@@ -2,31 +2,21 @@ import type { Brand, BrandInput, Page, PageQuery } from "../../../shared/catalog
 import { DomainError } from "../domain/errors";
 import type { BrandRepository } from "../domain/repositories";
 import { assertCanDeleteReferenced } from "../domain/product-rules";
-import { assertValidImageDataUrl, parseCode, parseOptionalText, parseRequiredText } from "../domain/values";
-import type { Clock, IdGenerator, ImageStorage } from "./ports";
+import { parseCode, parseOptionalText, parseRequiredText } from "../domain/values";
+import { replaceCatalogImage } from "./catalog-media";
+import type { Clock, IdGenerator, ImageStorage, UnitOfWork } from "./ports";
 
 export function createBrandUseCases(deps: {
   brands: BrandRepository;
   images: ImageStorage;
   clock: Clock;
   ids: IdGenerator;
+  uow: UnitOfWork;
 }) {
   const requireBrand = (id: string): Brand => {
     const brand = deps.brands.findById(id);
     if (!brand) throw new DomainError("BRAND_NOT_FOUND", "العلامة التجارية غير موجودة");
     return brand;
-  };
-
-  const storeImage = (dataUrl: string | null | undefined, id: string, previous: string | null): string | null => {
-    if (dataUrl === undefined) return previous;
-    if (dataUrl === null) {
-      if (previous) deps.images.remove(previous);
-      return null;
-    }
-    const extension = assertValidImageDataUrl(dataUrl);
-    const imagePath = deps.images.save({ dataUrl, folder: "brands", fileName: `${id}.${extension}` });
-    if (previous && previous !== imagePath) deps.images.remove(previous);
-    return imagePath;
   };
 
   return {
@@ -42,17 +32,13 @@ export function createBrandUseCases(deps: {
       const description = parseOptionalText(input.description);
       if (deps.brands.findByCode(code)) throw new DomainError("DUPLICATE_CODE", "كود العلامة التجارية مستخدم بالفعل");
       const id = deps.ids.next();
-      let imagePath: string | null = null;
-      try {
-        imagePath = storeImage(input.imageDataUrl, id, null);
+      return deps.uow.run(effects => {
+        const imagePath = replaceCatalogImage(deps, effects, "brands", input.imageDataUrl, null);
         const now = deps.clock.nowIso();
         const brand: Brand = { id, name, code, description, imagePath, status: "active", createdAt: now, updatedAt: now };
         deps.brands.insert(brand);
         return brand;
-      } catch (error) {
-        if (imagePath) deps.images.remove(imagePath);
-        throw error;
-      }
+      });
     },
     updateBrand(id: string, input: BrandInput): Brand {
       const current = requireBrand(id);
@@ -61,15 +47,12 @@ export function createBrandUseCases(deps: {
       const description = parseOptionalText(input.description);
       const same = deps.brands.findByCode(code);
       if (same && same.id !== id) throw new DomainError("DUPLICATE_CODE", "كود العلامة التجارية مستخدم بالفعل");
-      const imagePath = storeImage(input.imageDataUrl, id, current.imagePath);
-      const brand = { ...current, name, code, description, imagePath, updatedAt: deps.clock.nowIso() };
-      try {
+      return deps.uow.run(effects => {
+        const imagePath = replaceCatalogImage(deps, effects, "brands", input.imageDataUrl, current.imagePath);
+        const brand = { ...current, name, code, description, imagePath, updatedAt: deps.clock.nowIso() };
         deps.brands.update(brand);
         return brand;
-      } catch (error) {
-        if (imagePath && imagePath !== current.imagePath) deps.images.remove(imagePath);
-        throw error;
-      }
+      });
     },
     activateBrand(id: string): Brand {
       const current = requireBrand(id);
@@ -88,8 +71,10 @@ export function createBrandUseCases(deps: {
     deleteBrand(id: string): void {
       const current = requireBrand(id);
       assertCanDeleteReferenced(deps.brands.countProducts(id), "لا يمكن حذف العلامة التجارية لارتباطها بأصناف. يمكنك تعطيلها بدلًا من ذلك.");
-      deps.brands.delete(id);
-      if (current.imagePath) deps.images.remove(current.imagePath);
+      deps.uow.run(effects => {
+        deps.brands.delete(id);
+        replaceCatalogImage(deps, effects, "brands", null, current.imagePath);
+      });
     }
   };
 }

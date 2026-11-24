@@ -29,3 +29,19 @@ The context-isolated preload exposes `window.warehouse.warehouses` groups and a 
 Warehouse reads require `read`; create/edit uses `warehouse`; status uses `warehouse.status`; reparent uses `warehouse.reparent`; branch reassignment uses `warehouse.reassign`. Admin's existing v7 grants are reused. Multiple roles contribute their union; UI capabilities never substitute for Main/Application authorization.
 
 See the [approved Phase 3 ADRs](phase3-domain-decisions.md), [operating guide](phase3-operations.md) and [final validation](phase3-final-validation.md). Historical stage reports describe their original checkout and remain historical evidence. Installed-Windows acceptance and customer v6 distribution provenance remain separate production gates.
+
+## Phase 4 Stage 4 inventory queries
+
+Inventory queries use the Catalog stock-item ID and exact Warehouse location ID. Catalog resolves the base unit for existing stock items regardless of activation. The warehouse balance reader previously used the operational location list, which excluded inactive locations and descendants of inactive parents. Reporting now uses a Warehouse scope that includes inactive stockable definitions. Posting and counting still use the operational eligibility policy.
+
+A missing balance returns `null` for on-hand and available quantities. A stored zero returns `"0.000"`. Item and warehouse totals use the signed 64-bit Quantity range and fail explicitly on overflow. History pages by descending movement ID, using a decimal string cursor to preserve the full SQLite integer range. Consistency verification streams movements for one stock item and location and compares against the stored balance in the same read transaction. It shares the ledger calculation used by the existing reconciliation and rebuild commands.
+
+The SQLite query factory takes the host's existing connection and trusted session access. Each query requires the existing `read` permission. Later IPC and Renderer work can compose this factory with the current window session and named request handlers. Module activation can be enforced at the same execution boundary when Settings provides that policy.
+
+## Identity composition
+
+Main creates one Identity service on its managed SQLite connection. IPC uses the public `Identity` type and the service owns per-window login attempts and sessions. After asynchronous work, it checks the exact attempt or session and rechecks the relevant live grant before writing. Window destruction and logout end the session and cancel pending login attempts.
+
+Identity Application uses ports for operator storage, credential operations and ID generation. The SQLite adapter checks for an empty operator table inside the first-admin transaction. It writes each additional operator, their role assignments and the audit record in one transaction. The Node adapter preserves `s1` scrypt digests and defers comparison until Application has checked the login attempt.
+
+Core Domain and Application modules can import platform-independent types and approved public contracts. The architecture checker rejects imports into infrastructure and rejects Node built-ins, Electron and SQLite drivers before skipping external packages.

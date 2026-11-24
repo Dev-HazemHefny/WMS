@@ -2,7 +2,7 @@ import { architectureV2 } from "./architecture-v2";
 import Database from "better-sqlite3";
 import { phase3 } from "./phase3";
 
-export const CURRENT_SCHEMA_VERSION = 7;
+export const CURRENT_SCHEMA_VERSION = 8;
 
 interface Migration {
   version: number;
@@ -216,10 +216,17 @@ const migrations: Migration[] = [
   },
   { version: 6, name: "architecture_v2", up: architectureV2 },
   { version: 7, name: "warehouse_definitions", up: phase3 },
+  {
+    version: 8,
+    name: "inventory_balance_location_index",
+    up: `
+    CREATE INDEX balances_location ON balances(location);
+    UPDATE app_metadata SET value='8',updated_at=CURRENT_TIMESTAMP WHERE key='schema_version';
+    `,
+  },
 ];
 
-// Compare against the applied version, so ALTER TABLE in v7 does not invalidate
-// legitimate v7 databases on the next startup. Applied migration SQL is unchanged.
+// Validate each database against the definitions for its applied version.
 const definitions = new Map<number, { name: string; sql: string }[]>();
 export function verifySchema(db: Database.Database): number {
   if (!db.prepare("SELECT 1 FROM sqlite_schema WHERE name='schema_migrations'").get()) {
@@ -257,9 +264,11 @@ export function verifySchema(db: Database.Database): number {
 
 export function verifyDatabase(db: Database.Database): number {
   const version = verifySchema(db);
-  if (!version || db.pragma("integrity_check",{simple:true}) !== "ok" || (db.pragma("foreign_key_check") as unknown[]).length) {
-    throw new Error("Invalid database integrity or foreign keys");
-  }
+  if (!version) throw new Error("Invalid database integrity: schema has not been initialized");
+  const integrity = db.pragma("integrity_check", { simple: true });
+  if (integrity !== "ok") throw new Error(`Invalid database integrity: ${integrity}`);
+  const [violation] = db.pragma("foreign_key_check") as { table: string; parent: string }[];
+  if (violation) throw new Error(`Invalid database foreign keys: ${violation.table} references ${violation.parent}`);
   if (version >= 7 && db.prepare(`SELECT w.id FROM warehouses w LEFT JOIN locations l ON l.warehouse=w.id AND l.is_default=1
       GROUP BY w.id HAVING count(l.id)<>1 OR min(l.is_stockable)<>1 OR count(l.parent_id)<>0`).get()) {
     throw new Error("Warehouse must have one stockable default root");
@@ -317,7 +326,7 @@ export function runMigrations(
       }
       db.exec(migration.up);
       insertApplied.run(migration.version, migration.name);
-      if (migration.version === 7) verifyDatabase(db);
+      if (migration.version >= 7) verifyDatabase(db);
     });
     apply();
   }

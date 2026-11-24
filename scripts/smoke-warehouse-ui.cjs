@@ -2,7 +2,7 @@
 const {app}=require("electron"),fs=require("node:fs"),path=require("node:path"),os=require("node:os");
 const profile=process.env.WMS_QA_PROFILE;
 const evidencePrefix=process.env.WMS_QA_EVIDENCE_PREFIX||"phase3-stage7";
-if(!/^phase3-stage[78](?:-baseline)?$/.test(evidencePrefix))throw Error("Invalid QA evidence prefix");
+if(!/^(?:phase3-stage[78]|phase4-stage7)(?:-baseline)?$/.test(evidencePrefix))throw Error("Invalid QA evidence prefix");
 if(!profile||path.dirname(path.resolve(profile))!==path.resolve(os.tmpdir())||!/^warehouse-desktop-test-[a-z0-9]+$/i.test(path.basename(profile)))throw Error("A disposable QA profile is required");
 app.setPath("userData",profile);app.disableHardwareAcceleration();
 const deadline=setTimeout(()=>{console.error("Warehouse UI timed out");app.exit(1);},170000);
@@ -27,7 +27,8 @@ const steps=[
     let ancestor=child.id;
     for(let i=0;i<12;i++)ancestor=(await api.warehouses.locations.create({warehouseId:w.id,parentId:ancestor,code:"DEEP_"+i,name:"مستوى "+i,locationType:"shelf"})).id;
     const category=await api.catalog.categories.create({code:"UI",name:"أصناف التجربة"}),unit=await api.catalog.units.create({name:"قطعة",symbol:"pc",dimension:"count"});
-    const product=(await api.catalog.products.create({name:"صنف التجربة",sku:"UI_SKU",productType:"simple",categoryId:category.id,baseUnitId:unit.id,allowDecimalQuantity:false})).product;
+    const longName = "صنف التجربة للاستخدام في المخازن المركزية ومواقع التخزين الفرعية ومراجعة الأرصدة اليومية";
+    const product=(await api.catalog.products.create({name:longName,sku:"UI_SKU",productType:"simple",categoryId:category.id,baseUnitId:unit.id,allowDecimalQuantity:false})).product;
     await api.identity.add({name:"ui-clerk",password:"test-password-456",roles:["clerk"]});
     Object.assign(window.__qa,{b,w,root,child,product,deep:ancestor,item:(await api.inventory.execute({op:"items"})).rows[0].id});
     check(document.documentElement.dir==="rtl","Arabic RTL shell");
@@ -98,7 +99,7 @@ const steps=[
   }],
   ["inventory",async function(){
     const q=window.__qa,{wait,check,click,fill,route}=q,api=window.warehouse;
-    await route("/inventory","عمليات المخزون");await wait(()=>document.querySelectorAll('.inventory-entry select')[1].options.length>1,"eligible locations");
+    await route("/inventory/operations","عمليات المخزون");await wait(()=>document.querySelectorAll('.inventory-entry select')[1].options.length>1,"eligible locations");
     const selects=()=>document.querySelectorAll('.inventory-entry select');
     check(Array.from(selects()[1].options).some(node=>node.textContent.includes(q.w.name)&&node.textContent.includes(q.root.name)),"Inventory labels show Warehouse and full path");
     const org=await api.warehouses.locations.create({warehouseId:q.w.id,code:"ORG",name:"تنظيمي فقط",locationType:"shelf",isStockable:false});
@@ -110,6 +111,7 @@ const steps=[
     await fill('select',"transfer",document.querySelector('.inventory-entry label'));await fill('select',q.child.id,document.querySelectorAll('.inventory-entry label')[2]);await fill('select',q.item,document.querySelectorAll('.inventory-entry label')[3]);await fill('input',"3",document.querySelectorAll('.inventory-entry label')[4]);await click("إضافة سطر");await click("حفظ مسودة");await wait(()=>Array.from(document.querySelectorAll('.inventory-documents tbody tr')).some(node=>node.textContent.includes("تحويل")),"transfer draft");row=Array.from(document.querySelectorAll('.inventory-documents tbody tr')).find(node=>node.textContent.includes("تحويل"));await click("اعتماد",row);await wait(()=>row.textContent.includes("معتمد"),"transfer posting");check(true,"Transfer source/destination remain functional");
     const decimal=(await api.catalog.products.create({name:"صنف عشري",sku:"UI_DECIMAL",productType:"simple",categoryId:q.product.categoryId,baseUnitId:q.product.baseUnitId,allowDecimalQuantity:true})).product;
     const decimalItem=(await api.inventory.execute({op:"items"})).rows.find(value=>value.id==="p:"+decimal.id).id;
+    q.decimalItem=decimalItem;
     const decimalReceipt=await api.inventory.execute({op:"draft",kind:"receipt",lines:[{item:decimalItem,location:q.child.id,quantity:"1.125"}]});
     await api.inventory.execute({op:"post",document:decimalReceipt.id,version:1,command:"decimal-ui-precision"});await click("الأرصدة");
     await wait(()=>Array.from(document.querySelectorAll('fieldset > table tr')).some(value=>value.textContent.includes("UI_DECIMAL")&&value.textContent.includes("1.125")),"three-decimal quantity display");check(true,"Inventory displays exact three-decimal balances");
@@ -128,6 +130,87 @@ const steps=[
     await click("بدء الجرد وقفل الموقع");await wait(()=>Array.from(document.querySelectorAll('.inventory-documents tbody tr')).some(node=>node.textContent.includes("جرد")),"start count");row=Array.from(document.querySelectorAll('.inventory-documents tbody tr')).find(node=>node.textContent.includes("جرد"));await click("تعديل",row);check(document.querySelectorAll('.inventory-entry select')[1].disabled,"Count edit preserves locked exact location");await fill('input',"6",document.querySelectorAll('.inventory-entry label')[3]);await click("إضافة سطر");await click("حفظ التعديل");await wait(()=>!q.find("إغلاق تعديل المسودة"),"save count actuals");await click("مراجعة",row);await wait(()=>row.textContent.includes("قيد المراجعة"),"review count");await click("اعتماد",row);await wait(()=>row.textContent.includes("معتمد"),"post count");check(true,"Count start/edit/review/post through UI");
     const issue=Array.from(document.querySelectorAll('.inventory-documents tbody tr')).find(node=>node.textContent.includes("صرف"));await click("عكس المستند",issue);await wait(()=>Array.from(document.querySelectorAll('.inventory-documents tbody tr')).some(node=>node.textContent.includes("عكس")&&!node.textContent.includes("عكس المستند")),"reversal");check(true,"Posted issue reversal through UI");
     check(!(await api.inventory.execute({op:"reconcile"})).rows.length,"Ledger/balance reconciliation after UI workflows");
+  }],
+  ["inventory-reports",async function(){
+    const q=window.__qa,{wait,check,click,route}=q;
+    const scope=new URLSearchParams({item:q.decimalItem,location:q.child.id});
+    const report=()=>document.querySelector(".inventory-report");
+    await route(`/inventory?${scope}`,"نظرة عامة على المخزون");
+    await wait(()=>report()?.querySelectorAll(".inventory-quantity").length===2,"exact on-hand and available quantities");
+    check(Array.from(report().querySelectorAll(".inventory-quantity")).every(cell=>cell.textContent==="1.125"),"Scoped overview uses the current ledger-backed quantities");
+    await click("عرض الأرصدة");
+    await wait(()=>report()?.querySelector("tbody")?.textContent.includes("1.125"),"exact location balance");
+    check(report().querySelector("tbody").textContent.includes("UI_DECIMAL"),"Exact balance includes Catalog labels");
+    await click("صنف عشري",report().querySelector("tbody"));
+    await wait(()=>report()?.querySelector(".inventory-metrics .inventory-quantity")?.textContent==="1.125","stock item total");
+    await route(`/inventory/warehouses?warehouse=${encodeURIComponent(q.w.id)}`,"المخزون حسب المخزن");
+    await wait(()=>report()?.querySelectorAll("table").length===2,"warehouse totals and location balances");
+    check(report().querySelector("tbody").textContent.includes("UI_DECIMAL"),"Warehouse report displays the posted item");
+    check(report().querySelector("tbody").textContent.includes(q.product.name), "Warehouse report renders the full long product name");
+    await route(`/inventory/history?${scope}`,"سجل حركات المخزون");
+    await wait(()=>report()?.querySelector("tbody .inventory-quantity")?.textContent==="+1.125","signed movement history");
+    await route(`/inventory/consistency?${scope}`,"التحقق من اتساق الرصيد");
+    await click("تحقق من الاتساق");
+    await wait(()=>report()?.querySelector(".notice-success"),"matching balance consistency");
+    check(true,"All six Inventory query methods work through the rendered reports and real Preload");
+  }],
+  ["inventory-live-history", async function() {
+    const { check, click, route, wait, decimalItem, child, root } = window.__qa;
+    const api = window.warehouse.inventory;
+    async function post(kind, location, command) {
+      const draft = await api.execute({ op: "draft", kind, lines: [{ item: decimalItem, location, quantity: "0.001" }] });
+      await api.execute({ op: "post", document: draft.id, version: 1, command });
+    }
+    const historyUrl = locationId => "/inventory/history?" + new URLSearchParams({ item: decimalItem, location: locationId });
+    const ids = () => Array.from(document.querySelectorAll(".inventory-report tbody tr"), row => row.cells[0].textContent);
+    await post("receipt", root.id, "qa-zero-receipt");
+    await post("issue", root.id, "qa-zero-issue");
+    const overview = location => "/inventory?" + new URLSearchParams({ item: decimalItem, location });
+    await route(overview(root.id), "نظرة عامة على المخزون");
+    const quantities = () => Array.from(document.querySelectorAll(".inventory-metrics .inventory-quantity"), node => node.textContent);
+    await wait(() => quantities().join() === "0.000,0.000", "persisted zero");
+    await route(overview(window.__qa.unavailable.id), "نظرة عامة على المخزون");
+    await wait(() => document.querySelectorAll(".inventory-metrics dd")[0]?.textContent.includes("لا يوجد رصيد"), "missing balance");
+    check(true, "Overview distinguishes a persisted zero from a missing balance at an inactive stockable location");
+
+    for (let i = 0; i < 51; i++) await post("receipt", child.id, "qa-history-" + i);
+    const expected = (await api.getInventoryHistory({ itemId: decimalItem, locationId: child.id, limit: 200 })).movements.map(row => row.movementId);
+    const start = performance.now();
+    await route(historyUrl(child.id), "سجل حركات المخزون");
+    await wait(() => ids().length === 50, "50 rendered rows");
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    window.__qa.historyPaintMs = Math.round(performance.now() - start);
+    check(ids().join() === expected.slice(0, 50).join(), "History renders the first 50 movements in exact descending order");
+    await post("receipt", child.id, "qa-history-live-insert");
+    await click("التالي");
+    await wait(() => ids().length === 2, "older history page");
+    check(ids().join() === expected.slice(50).join(), "A concurrent newer posting does not duplicate or skip older movements");
+    await click("السابق");
+    await wait(() => ids().length === 50 && ids()[0] !== expected[0], "refreshed first page");
+    check(ids().slice(1).join() === expected.slice(0, 49).join(), "Returning to page one includes the newer movement");
+    location.hash = historyUrl(root.id);
+    await wait(() => ids().length === 2, "changed history location");
+    check(document.querySelector(".pagination button").disabled &&
+      document.querySelector(".inventory-report tbody .inventory-quantity").textContent === "-0.001",
+      "Changing the location resets the cursor and renders the signed issue");
+    await route(historyUrl(child.id), "سجل حركات المخزون");
+    await wait(() => ids().length === 50, "history for layout checks");
+  }],
+  ["inventory-discrepancy", async function() {
+    const { check, click, route, wait, decimalItem, root } = window.__qa;
+    const scope = { itemId: decimalItem, locationId: root.id };
+    const inventory = window.warehouse.inventory;
+    const history = await inventory.getInventoryHistory(scope);
+    await route("/inventory/consistency?" + new URLSearchParams({ item: decimalItem, location: root.id }),
+      "التحقق من اتساق الرصيد");
+    await click("تحقق من الاتساق");
+    await wait(() => document.querySelector(".inventory-report .notice-error")?.textContent.includes("يوجد اختلاف"),
+      "deliberately inconsistent balance");
+    const values = Array.from(document.querySelectorAll(".inventory-report .inventory-quantity"), node => node.textContent);
+    check(values.join() === "9223372036854775.807,0.000", "Consistency report displays the exact 64-bit balance and ledger total");
+    check((await inventory.getStockBalance(scope)).onHand === values[0] &&
+      JSON.stringify(await inventory.getInventoryHistory(scope)) === JSON.stringify(history),
+      "Consistency report leaves the stored balance and history untouched");
   }],
   ["permissions-and-routes",async function(){
     const q=window.__qa,{wait,check,click,fill,submit,route}=q;
@@ -178,6 +261,46 @@ app.once("browser-window-created",(_event,win)=>{
             if(fixture.prepare("UPDATE locations SET status='inactive',version=version+1 WHERE id=? AND code='OLD'").run(id).changes!==1)throw Error("Missing adverse-state fixture");
             if(fixture.pragma("integrity_check",{simple:true})!=="ok"||fixture.pragma("foreign_key_check").length)throw Error("Invalid fixture database");
           }finally{fixture.close();}
+        }
+        if (name === "inventory-live-history") {
+          const historyPaintMs = await win.webContents.executeJavaScript("window.__qa.historyPaintMs");
+          console.log("Inventory history navigation and paint (ms)", historyPaintMs);
+          win.setSize(1100, 700);
+          await win.webContents.executeJavaScript(`(async () => {
+            const { check, wait } = window.__qa;
+            const report = document.querySelector(".inventory-report");
+            await wait(() => innerWidth <= 1100, "minimum window width");
+            check(getComputedStyle(report).direction === "rtl" && document.documentElement.scrollWidth <= innerWidth,
+              "Arabic Inventory history fits the minimum desktop width");
+            check(document.querySelector(".table-wrap").getBoundingClientRect().height > innerHeight &&
+              document.scrollingElement.scrollHeight > innerHeight, "A full history page can scroll");
+            document.querySelector(".inventory-nav a").focus();
+          })()`);
+          win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Tab" });
+          win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Tab" });
+          await win.webContents.executeJavaScript(`(async () => {
+            const { check, wait } = window.__qa;
+            const next = document.querySelectorAll(".inventory-nav a")[1];
+            await wait(() => document.activeElement === next, "Tab advances within Inventory navigation");
+            check(next.matches(":focus-visible") && getComputedStyle(next).outlineStyle !== "none",
+              "Tab advances within Inventory navigation and keeps a visible outline");
+          })()`);
+          fs.writeFileSync(path.resolve("out", `${evidencePrefix}-inventory-history-1100.png`),
+            (await win.webContents.capturePage()).toPNG());
+          win.setSize(1440, 900);
+          const scope = await win.webContents.executeJavaScript("({ item: window.__qa.decimalItem, location: window.__qa.root.id })");
+          const fixture = new (require("better-sqlite3"))(path.join(profile, "warehouse.sqlite"), { fileMustExist: true });
+          try {
+            fixture.pragma("foreign_keys=ON");
+            if (fixture.prepare("UPDATE balances SET qty=? WHERE item=? AND location=? AND qty=0")
+              .run(9223372036854775807n, scope.item, scope.location).changes !== 1) throw Error("Missing zero-balance fixture");
+          } finally {
+            fixture.close();
+          }
+        }
+        if (name === "inventory-discrepancy") {
+          fs.writeFileSync(path.resolve("out", `${evidencePrefix}-inventory-consistency.png`),
+            (await win.webContents.capturePage()).toPNG());
         }
       }
       const checks=await win.webContents.executeJavaScript("window.__qa.checks");

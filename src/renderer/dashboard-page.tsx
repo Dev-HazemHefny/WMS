@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { navigation } from "./navigation";
+import { useVisibleNavigation } from "./navigation";
 import { Notice, errorMessage } from "./ui";
 
 export function DashboardPage() {
+  const navigation = useVisibleNavigation();
   const [counts, setCounts] = useState<{ products: number; categories: number; units: number; brands: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {

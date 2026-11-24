@@ -70,7 +70,15 @@ const warehouseApi: WarehouseApi = {
     backup: () => invoke("recovery:backup"),
     restore: () => invoke("recovery:restore"),
   },
-  inventory: { execute: (command) => invoke("inventory:execute", command) },
+  inventory: {
+    execute: command => invoke("inventory:execute", command),
+    getStockBalance: input => invoke(IPC_CHANNELS.inventory.getStockBalance, input),
+    getStockItemStock: input => invoke(IPC_CHANNELS.inventory.getStockItemStock, input),
+    getWarehouseStock: input => invoke(IPC_CHANNELS.inventory.getWarehouseStock, input),
+    getAvailableQuantity: input => invoke(IPC_CHANNELS.inventory.getAvailableQuantity, input),
+    getInventoryHistory: input => invoke(IPC_CHANNELS.inventory.getInventoryHistory, input),
+    verifyBalanceConsistency: input => invoke(IPC_CHANNELS.inventory.verifyBalanceConsistency, input),
+  },
   system: {
     getAppInfo: () => invoke<AppInfo>(IPC_CHANNELS.system.getAppInfo),
   },

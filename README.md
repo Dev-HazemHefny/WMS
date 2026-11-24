@@ -32,6 +32,12 @@ npm run test:desktop
 ## Data location
 The SQLite database is stored in Electron's `app.getPath("userData")` directory, not inside the installation directory.
 
+## Pre-Phase 5 demo
+
+Run `npm run db:seed` to create the workspace-local demo, then run `npm run db:seed:open` to open it in Electron. Sign in as `demo-admin` with `demo-admin-local-2026`. The demo lives in `.wms-dev/pre-phase-5/`, and rerunning the seed preserves edits made in the demo.
+
+See the [Pre-Phase 5 validation report](docs/PRE_PHASE_5_VALIDATION_REPORT.md) for sample records, additional accounts, and verification commands.
+
 ## Product master data
 The Phase 2 interface is Arabic and right-to-left. It includes SQLite-backed screens for products, categories, units, brands, variants, packaging units, and barcodes. Units carry a dimension (count, mass, volume, length, area, or other) so packaging conversions cannot cross incompatible dimensions. Existing units migrate as `other` to preserve their current relationships.
 

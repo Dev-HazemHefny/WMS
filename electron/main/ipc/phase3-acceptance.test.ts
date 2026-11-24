@@ -5,9 +5,9 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { initializeDatabase, closeDatabase } from "../database";
-import { verifyDatabase } from "../database/migrations";
+import { CURRENT_SCHEMA_VERSION, verifyDatabase } from "../database/migrations";
 import { activeDirectory, activate, confirmStartup, createVerifiedSnapshot, stageRestore } from "../recovery";
-import { createIdentity } from "@core/identity/application/identity";
+import { createSqliteIdentity } from "@core/identity/infrastructure/create-sqlite-identity";
 import { createSqliteCatalog } from "@core/catalog/infrastructure/create-sqlite-catalog";
 import { FileImageStorage } from "@core/catalog/infrastructure/file-image-storage";
 import { IPC_CHANNELS } from "@shared/ipc/channels";
@@ -25,12 +25,12 @@ const event={sender:{id:84,mainFrame:frame},senderFrame:frame} as unknown as Ipc
 const png="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j2XkAAAAASUVORK5CYII=";
 const inventoryTables=["stock_items","documents","document_items","movements","balances","count_locks","count_expected","reviewed_counts","receipts"];
 const businessTables=["branches","warehouses","locations",...inventoryTables,"audit"];
-let root:string,db:Database.Database,identity:ReturnType<typeof createIdentity>;
+let root:string,db:Database.Database,identity:ReturnType<typeof createSqliteIdentity>;
 let handlers:Map<string,(event:IpcMainInvokeEvent,input:unknown)=>unknown>;
 let branch:BranchDto,warehouse:WarehouseDto,zone:StorageLocationDto,shelf:StorageLocationDto,bin:StorageLocationDto,cross:StorageLocationDto,product:ProductDetails,item:string;
 
 function open(){
-  db=initializeDatabase(activeDirectory(root));identity=createIdentity(db);
+  db=initializeDatabase(activeDirectory(root));identity=createSqliteIdentity(db);
   jest.mocked(ipcMain.handle).mockClear();
   registerIpcHandlers(db,createSqliteCatalog(db,new FileImageStorage(join(activeDirectory(root),"media"))),identity);
   handlers=new Map(jest.mocked(ipcMain.handle).mock.calls.map(([channel,handler])=>[channel,handler]));
@@ -65,7 +65,7 @@ beforeEach(async()=>{
 });
 afterEach(async()=>{
   try{
-    expect(verifyDatabase(db)).toBe(7);expect(db.pragma("foreign_keys",{simple:true})).toBe(1);expect(db.pragma("journal_mode",{simple:true})).toBe("wal");
+    expect(verifyDatabase(db)).toBe(CURRENT_SCHEMA_VERSION);expect(db.pragma("foreign_keys",{simple:true})).toBe(1);expect(db.pragma("journal_mode",{simple:true})).toBe("wal");
     expect(db.pragma("integrity_check",{simple:true})).toBe("ok");expect(db.pragma("foreign_key_check")).toEqual([]);
     await ok("identity:login",{name:"admin",password:"test-password-123",setup:false});expect((await stock({op:"reconcile"})).rows).toEqual([]);
   }finally{
@@ -140,8 +140,15 @@ it("F: switches roles and invalidates sessions at the real IPC composition bound
   await rejected(C.branches.create,{code:"DENIED",name:"مرفوض"},"FORBIDDEN");
   await rejected(C.locations.reparent,{id:bin.id,parentId:null,expectedVersion:1},"FORBIDDEN");
   await rejected(C.locations.create,{warehouseId:warehouse.id,code:"CLAIM",name:"مرفوض",locationType:"bin",actor:"admin"},"VALIDATION_ERROR");
+  await rejected(IPC_CHANNELS.catalog.categories.create,{code:"DENIED",name:"مرفوض"},"FORBIDDEN");
+  expect(db.prepare("SELECT 1 FROM categories WHERE code='DENIED'").get()).toBeUndefined();
+  await rejected("inventory:execute",{op:"rebuild"},"FORBIDDEN");
+  const balanceRequest={itemId:item,locationId:bin.id};
+  await ok(IPC_CHANNELS.inventory.getStockBalance,balanceRequest);
   await ok("identity:logout");expect(await ok(IPC_CHANNELS.identity.capabilities)).toEqual({authenticated:false,permissions:[]});
   await rejected(C.warehouses.get,{id:warehouse.id},"AUTH_REQUIRED");
+  await rejected(IPC_CHANNELS.catalog.categories.lookup,undefined,"AUTH_REQUIRED");
+  await rejected(IPC_CHANNELS.inventory.getStockBalance,balanceRequest,"AUTH_REQUIRED");
 });
 
 it("restores a media-complete organization/stock snapshot, preserves identities/receipts and rejects corrupted media without activation",async()=>{

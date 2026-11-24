@@ -10,6 +10,8 @@
     "preview": "electron-vite preview",
     "package": "npm run build && electron-builder",
     "test:desktop": "node scripts/run-desktop-qa.cjs",
+    "db:seed": "node scripts/pre-phase-5/run.cjs seed",
+    "db:seed:open": "npm run build && node scripts/pre-phase-5/run.cjs open",
     "check:architecture": "node scripts/check-boundaries.cjs",
     "typecheck": "node scripts/check-boundaries.cjs && tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
     "test": "node scripts/run-jest.cjs --runInBand",

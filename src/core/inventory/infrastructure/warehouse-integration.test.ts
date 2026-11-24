@@ -3,8 +3,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { initializeDatabase, closeDatabase } from "../../../../electron/main/database";
-import { verifyDatabase } from "../../../../electron/main/database/migrations";
-import { createIdentity } from "../../identity/application/identity";
+import { CURRENT_SCHEMA_VERSION, verifyDatabase } from "../../../../electron/main/database/migrations";
+import { createSqliteIdentity } from "../../identity/infrastructure/create-sqlite-identity";
 import { createSqliteWarehouses } from "../../warehouses/infrastructure/create-sqlite-warehouses";
 import { createInventoryWarehouseGateway } from "../../warehouses/infrastructure/create-inventory-gateway";
 import { createSqliteCatalog } from "../../catalog/infrastructure/create-sqlite-catalog";
@@ -14,14 +14,14 @@ import { createInventory } from "./sqlite-inventory";
 import type { StockCommand } from "../../../shared/ipc/stock";
 
 let root:string, db:Database.Database, item:string, branchId:string, warehouseId:string, source:string, destination:string, cross:string;
-let identity:ReturnType<typeof createIdentity>;
+let identity:ReturnType<typeof createSqliteIdentity>;
 let services:ReturnType<typeof createSqliteWarehouses>;
 let gateway:ReturnType<typeof createInventoryWarehouseGateway>;
 let execute:ReturnType<typeof createInventory>;
 const tables=["branches","warehouses","locations","documents","document_items","movements","balances","count_locks","count_expected","reviewed_counts","receipts","audit"];
 function open() {
   db=initializeDatabase(root);
-  identity=createIdentity(db);
+  identity=createSqliteIdentity(db);
   const usage=createSqliteLocationUsage(db);
   services=createSqliteWarehouses(db,{usage,access:{currentActor:()=>identity.actor(1),authorize:identity.authorize}});
   gateway=createInventoryWarehouseGateway(db,identity.authorize,usage);
@@ -51,7 +51,7 @@ beforeEach(async()=>{
 });
 afterEach(()=>{
   try{
-    expect(verifyDatabase(db)).toBe(7);
+    expect(verifyDatabase(db)).toBe(CURRENT_SCHEMA_VERSION);
     expect(db.pragma("foreign_keys",{simple:true})).toBe(1);
     expect(db.pragma("journal_mode",{simple:true})).toBe("wal");
     expect(db.pragma("integrity_check",{simple:true})).toBe("ok");

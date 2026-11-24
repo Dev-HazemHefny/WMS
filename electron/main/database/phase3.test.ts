@@ -10,7 +10,7 @@ import { createVerifiedSnapshot, snapshot, stageRestore, verifyRestorableSnapsho
 import { createSqliteCatalog } from "@core/catalog/infrastructure/create-sqlite-catalog";
 import { createStockCatalog } from "@core/catalog/infrastructure/stock-catalog";
 import { createInventory } from "@core/inventory/infrastructure/sqlite-inventory";
-import { createIdentity } from "@core/identity/application/identity";
+import { createSqliteIdentity } from "@core/identity/infrastructure/create-sqlite-identity";
 import { createWarehouseDirectory } from "@core/warehouses/infrastructure/sqlite-directory";
 import { createInventoryWarehouseGateway } from "@core/warehouses/infrastructure/create-inventory-gateway";
 import { createSqliteLocationUsage } from "@core/inventory/infrastructure/sqlite-location-usage";
@@ -21,7 +21,7 @@ let item: string;
 const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j2XkAAAAASUVORK5CYII=", "base64");
 const digest = (path: string) => createHash("sha256").update(readFileSync(path)).digest("hex");
 function inventory() {
-  const authorize=createIdentity(db).authorize;
+  const authorize=createSqliteIdentity(db).authorize;
   return createInventory(db, authorize, createStockCatalog(db), createInventoryWarehouseGateway(db,authorize,createSqliteLocationUsage(db)), () => { throw Error("unexpected repair"); });
 }
 function state(tables: readonly string[]) {
@@ -29,7 +29,7 @@ function state(tables: readonly string[]) {
 }
 const inventoryTables = ["stock_items", "documents", "document_items", "movements", "balances", "count_locks", "count_expected", "reviewed_counts", "receipts", "audit"];
 function upgrade() {
-  runMigrations(db, CURRENT_SCHEMA_VERSION, {
+  runMigrations(db, 7, {
     beforeUpgrade: () => { createVerifiedSnapshot(db, root, join(root, "backups")); },
   });
 }
@@ -160,7 +160,7 @@ it("rolls back a late migration failure and restores the verified pre-upgrade da
   const restoredId = stageRestore(saved,root);
   const restored = new Database(join(root,restoredId,"warehouse.sqlite"));
   try {
-    expect(verifyDatabase(restored)).toBe(7);
+    expect(verifyDatabase(restored)).toBe(CURRENT_SCHEMA_VERSION);
     for (const table of inventoryTables) expect(restored.prepare(`SELECT * FROM ${table} ORDER BY rowid`).safeIntegers().all()).toEqual(before[table]);
     expect(readFileSync(join(root,restoredId,"media/products/test.png"))).toEqual(png);
   } finally { restored.close(); }
@@ -273,14 +273,14 @@ it("creates new v7 warehouses with one default atomically while retaining legacy
   expect(verifyDatabase(db)).toBe(7);
 });
 
-it("bootstraps a new empty file directly to v7 without a historical backup", () => {
+it("bootstraps a new empty file to the current schema without a historical backup", () => {
   const freshRoot = join(root,"fresh");
   mkdirSync(freshRoot);
   const fresh = initializeDatabase(freshRoot);
-  expect(verifyDatabase(fresh)).toBe(7);
+  expect(verifyDatabase(fresh)).toBe(CURRENT_SCHEMA_VERSION);
   expect(readdirSync(freshRoot)).not.toContain("backups");
   const directory = createWarehouseDirectory(fresh);
   directory.branch("first","First");
   directory.warehouse("first-wh","first","First warehouse");
-  expect(verifyDatabase(fresh)).toBe(7);
+  expect(verifyDatabase(fresh)).toBe(CURRENT_SCHEMA_VERSION);
 });

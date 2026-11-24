@@ -1,5 +1,13 @@
 export const IPC_CHANNELS = {
   identity: { capabilities: "identity:capabilities" },
+  inventory: {
+    getStockBalance: "inventory:get-stock-balance",
+    getStockItemStock: "inventory:get-stock-item-stock",
+    getWarehouseStock: "inventory:get-warehouse-stock",
+    getAvailableQuantity: "inventory:get-available-quantity",
+    getInventoryHistory: "inventory:get-history",
+    verifyBalanceConsistency: "inventory:verify-consistency",
+  },
   warehouses: {
     branches: {
       create: "warehouses:branches:create", update: "warehouses:branches:update", list: "warehouses:branches:list",

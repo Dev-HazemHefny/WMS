@@ -1,13 +1,11 @@
-import { ZodError } from "zod";
-import type { ZodType } from "zod";
+import type { ZodIssue, ZodType, ZodTypeDef } from "zod";
 import { AppError } from "../../../src/core/shared/errors/app-error";
 import { CatalogValidationError } from "../../../src/shared/catalog/errors";
 import type { IpcResult } from "../../../src/shared/ipc/result";
 
-export type ZodSchema = ZodType<unknown, any, unknown>;
-
 type Executor<TInput, TOutput> = (input: TInput) => TOutput | Promise<TOutput>;
 type IpcError = Extract<IpcResult<never>, { ok: false }>["error"];
+export type ValidationErrorMapper = (issues: readonly ZodIssue[]) => IpcError;
 
 /** Maps every known error to a safe renderer-facing payload. */
 export function toIpcError(error: unknown): IpcError {
@@ -26,25 +24,25 @@ export function toIpcError(error: unknown): IpcError {
  * - Maps domain/validation errors to an Arabic user-facing message.
  * - Never leaks stack traces or internal database details to the renderer.
  */
-export function handle<TInput, TOutput>(deps: {
-  schema: ZodSchema;
-  execute: Executor<TInput, TOutput>;
+export function handle<Parsed, Raw, TOutput>(deps: {
+  schema: ZodType<Parsed, ZodTypeDef, Raw>;
+  execute: Executor<NoInfer<Parsed>, TOutput>;
+  validationError?: ValidationErrorMapper;
 }): (input: unknown) => Promise<IpcResult<TOutput>> {
   return async (raw: unknown) => {
-    const parsed = deps.schema.safeParse(raw);
-    if (!parsed.success) {
-      const first = (parsed.error as ZodError).issues[0];
-      return {
-        ok: false,
-        error: {
-          code: "VALIDATION_ERROR",
-          message: first?.message ?? "بيانات الطلب غير صالحة",
-        },
-      };
-    }
-
     try {
-      const data = await deps.execute(parsed.data as TInput);
+      const parsed = deps.schema.safeParse(raw);
+      if (!parsed.success) {
+        return {
+          ok: false,
+          error: deps.validationError?.(parsed.error.issues) ?? {
+            code: "VALIDATION_ERROR",
+            message: parsed.error.issues[0]?.message ?? "بيانات الطلب غير صالحة",
+          },
+        };
+      }
+
+      const data = await deps.execute(parsed.data);
       return { ok: true, data };
     } catch (error) {
       const mapped = toIpcError(error);

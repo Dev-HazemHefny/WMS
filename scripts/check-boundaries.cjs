@@ -1,4 +1,5 @@
 const fs = require("node:fs");
+const { isBuiltin } = require("node:module");
 const path = require("node:path");
 const ts = require("typescript");
 const root = process.cwd();
@@ -15,8 +16,14 @@ function visit(file) {
   const imports = [];
   graph.set(file, imports);
   const source = fs.readFileSync(path.join(root, file), "utf8");
-  for (const statement of ts.preProcessFile(source).importedFiles) {
+  const isDomainOrApplication = /^src\/core\/[^/]+\/(application|domain)\//.test(file);
+  for (const statement of ts.preProcessFile(source, true, true).importedFiles) {
     const name = statement.fileName;
+    if (
+      isDomainOrApplication &&
+      (name.startsWith("node:") || isBuiltin(name) || /^(electron|better-sqlite3|sqlite3)(\/|$)/.test(name))
+    )
+      throw Error(file + " imports " + name);
     const found = ts.resolveModuleName(
       name,
       path.join(root, file),
@@ -30,8 +37,11 @@ function visit(file) {
         name === "better-sqlite3")
     )
       throw Error(file + " imports " + name);
-    if (!found || found.isExternalLibraryImport) continue;
+    if (!found) continue;
     const target = relative(found.resolvedFileName);
+    if (isDomainOrApplication && /^src\/core\/[^/]+\/infrastructure\//.test(target))
+      throw Error(file + " imports " + target);
+    if (found.isExternalLibraryImport) continue;
     if (
       file.startsWith("src/renderer/") &&
       /^(electron|src\/core)\//.test(target)

@@ -1,19 +1,19 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import type { StockCommand, StockLine, StockResult } from "../shared/ipc/stock";
 import type { ResolvedLocationDto } from "../shared/warehouses/types";
 import { EXACT_COUNT_NOTICE, warehouseError } from "./warehouses/model";
-import { eligibleLocations, inventoryLocationLabel } from "./warehouses/inventory-locations";
+import { eligibleLocations, historicalLocationLabel, indexInventoryLocations, inventoryLocationLabel } from "./warehouses/inventory-locations";
 type Row = NonNullable<StockResult["rows"]>[number];
-const api = window.warehouse.inventory;
 export function InventoryPage() {
+  const api = window.warehouse.inventory;
   const [items, setItems] = useState<Row[]>([]),
     [places, setPlaces] = useState<ResolvedLocationDto[]>([]),
     [docs, setDocs] = useState<Row[]>([]),
     [result, setResult] = useState<Row[]>([]);
   const [message, setMessage] = useState(""),
     [busy, setBusy] = useState(false);
-  const [historical,setHistorical]=useState<Record<string,ResolvedLocationDto|null>>({});
+  const [historical, setHistorical] = useState<ReadonlyMap<string, string | null>>(() => new Map());
   const [kind, setKind] = useState<"receipt" | "issue" | "transfer" | "count">(
       "receipt",
     ),
@@ -23,32 +23,59 @@ export function InventoryPage() {
     [location, setLocation] = useState(""),
     [dest, setDest] = useState(""),
     [qty, setQty] = useState("1");
+  const refreshVersion = useRef(0);
+  const itemLabels = useMemo(() => {
+    const labels = new Map<Row["id"], Row["sku"]>();
+    for (const row of items) {
+      if (!labels.has(row.id)) labels.set(row.id, row.sku);
+    }
+    return labels;
+  }, [items]);
+  const indexedPlaces = useMemo(() => indexInventoryLocations(places), [places]);
+  const eligibleLabels = indexedPlaces.labels;
+
   async function refresh() {
+    const version = ++refreshVersion.current;
     const [i, p, d] = await Promise.all([
       api.execute({ op: "items" }),
       window.warehouse.warehouses.locations.stockable(),
       api.execute({ op: "documents" }),
     ]);
+    if (version !== refreshVersion.current) return;
     setItems(i.rows ?? []);
     setPlaces(eligibleLocations(p));
-    setHistorical({});
+    setHistorical(new Map());
     setDocs(d.rows ?? []);
   }
   useEffect(() => {
-    refresh().catch((e) => setMessage(warehouseError(e)));
-  }, []);
-  useEffect(()=>{
-    let active=true;
-    const ids=[...new Set([location,dest,...lines.flatMap(line=>[line.location,line.destination??""]),...result.flatMap(row=>[String(row.location??""),String(row.destination??"")])])]
-      .filter(id=>id&&!places.some(place=>place.location.id===id)&&historical[id]===undefined);
-    if(ids.length)void Promise.allSettled(ids.map(id=>window.warehouse.warehouses.locations.get({id}))).then(values=>{
-      if(!active)return;
-      const resolved:Record<string,ResolvedLocationDto|null>={};
-      values.forEach((value,index)=>{resolved[ids[index]]=value.status==="fulfilled"?value.value:null;if(value.status==="rejected")setMessage(warehouseError(value.reason));});
-      setHistorical(current=>({...current,...resolved}));
+    const pending = refresh();
+    const version = refreshVersion.current;
+    pending.catch(error => {
+      if (version === refreshVersion.current) setMessage(warehouseError(error));
     });
-    return ()=>{active=false;};
-  },[location,dest,lines,result,places,historical]);
+    return () => { refreshVersion.current++; };
+  }, []);
+  useEffect(() => {
+    let active = true;
+    const ids = [...new Set([
+      location,
+      dest,
+      ...lines.flatMap(line => [line.location, line.destination ?? ""]),
+      ...result.flatMap(row => [String(row.location ?? ""), String(row.destination ?? "")]),
+    ])].filter(id => id && !eligibleLabels.has(id) && !historical.has(id));
+    if (ids.length) {
+      void Promise.allSettled(ids.map(id => window.warehouse.warehouses.locations.get({ id }))).then(values => {
+        if (!active) return;
+        const resolved = new Map(historical);
+        values.forEach((value, index) => {
+          resolved.set(ids[index], value.status === "fulfilled" ? historicalLocationLabel(value.value) : null);
+          if (value.status === "rejected") setMessage(warehouseError(value.reason));
+        });
+        setHistorical(resolved);
+      });
+    }
+    return () => { active = false; };
+  }, [location, dest, lines, result, eligibleLabels, historical]);
   async function perform(fn: () => Promise<void>) {
     setBusy(true);
     setMessage("");
@@ -74,28 +101,31 @@ export function InventoryPage() {
       const raw=BigInt(String(value)),absolute=raw<0n?-raw:raw,decimal=(absolute%1000n).toString().padStart(3,"0").replace(/0+$/,"");
       return (raw<0n?"−":"")+(absolute/1000n).toString()+(decimal?"."+decimal:"");
     }
-    if(key==="item")return String(items.find(i=>i.id===value)?.sku??value);
-    if(key==="location"||key==="destination")return inventoryLocationLabel(String(value),places,historical);
+    if(key==="item")return String(itemLabels.get(value)??value);
+    if(key==="location"||key==="destination")return placeLabel(String(value));
     return String(value);
   }
   const labels:Record<string,string>={item:"الصنف",location:"الموقع",destination:"الوجهة",thousandths:"الكمية",expected:"المتوقع",counted:"الفعلي",qty:"الرصيد",ledger:"السجل",quantity:"الكمية المدخلة",document:"المستند",id:"المعرف",name:"الاسم",kind:"النوع",snapshot:"تفاصيل الحركة"};
-  const choices = (values: Row[], label: string) => [
+  const itemChoices = useMemo(() => [
     <option key="" value="">
       اختر
     </option>,
-    ...values.map((r) => (
+    ...items.map((r) => (
       <option key={String(r.id)} value={String(r.id)}>
-        {String(r[label])}
+        {String(r.sku)}
         {r.warehouse ? " · " + r.warehouse : ""}
       </option>
     )),
-  ];
-  const locationChoices=(selected:string)=>[
+  ], [items]);
+  const locationOptions = useMemo(() => [
     <option key="" value="">اختر موقعًا قابلًا للتخزين</option>,
-    ...places.map(place=><option key={place.location.id} value={place.location.id}>{inventoryLocationLabel(place.location.id,places,historical)}</option>),
-    ...(selected&&!places.some(place=>place.location.id===selected)?[<option key={selected} value={selected} disabled>{inventoryLocationLabel(selected,places,historical)}</option>]:[]),
-  ];
-  const sourceEligible=places.some(place=>place.location.id===location),destinationEligible=places.some(place=>place.location.id===dest);
+    ...indexedPlaces.options.map(({ id, label }) => <option key={id} value={id}>{label}</option>),
+  ], [indexedPlaces]);
+  const placeLabel = (id: string) => inventoryLocationLabel(id, eligibleLabels, historical);
+  const unavailableOption = (id: string) => id && !eligibleLabels.has(id)
+    ? <option value={id} disabled>{placeLabel(id)}</option>
+    : null;
+  const sourceEligible = eligibleLabels.has(location), destinationEligible = eligibleLabels.has(dest);
   return (
     <section dir="rtl" className="inventory-page">
       <div className="page-title"><div><h2>عمليات المخزون</h2><p>الاستلام والصرف والتحويل والجرد، في مساحة عمل واحدة.</p></div></div>
@@ -126,21 +156,23 @@ export function InventoryPage() {
             disabled={!!editing&&kind==="count"}
             onChange={(e) => setLocation(e.target.value)}
           >
-            {locationChoices(location)}
+            {locationOptions}
+            {unavailableOption(location)}
           </select>
         </label>
         {kind === "transfer" && (
           <label>
             الموقع الوجهة
             <select value={dest} onChange={(e) => setDest(e.target.value)}>
-              {locationChoices(dest)}
+              {locationOptions}
+              {unavailableOption(dest)}
             </select>
           </label>
         )}
         <label>
           الصنف
           <select value={item} onChange={(e) => setItem(e.target.value)}>
-            {choices(items, "sku")}
+            {itemChoices}
           </select>
         </label>
         <label>
@@ -165,11 +197,11 @@ export function InventoryPage() {
         </button>
         </div>
         {kind==="count"&&<p className="notice inventory-feedback">{EXACT_COUNT_NOTICE}</p>}
-        {location&&!sourceEligible&&<p className="notice notice-error">{inventoryLocationLabel(location,places,historical)}. أعد تفعيل الموقع من إدارة المخازن أو راجع المسودة. لم يُستبدل الموقع تلقائيًا.</p>}
+        {location&&!sourceEligible&&<p className="notice notice-error">{placeLabel(location)}. أعد تفعيل الموقع من إدارة المخازن أو راجع المسودة. لم يُستبدل الموقع تلقائيًا.</p>}
         <ul className="inventory-lines">
           {lines.map((l, i) => (
             <li key={i}>
-              <span>{items.find((r) => r.id === l.item)?.sku ?? l.item} · {l.quantity}<small className="warehouse-secondary">{inventoryLocationLabel(l.location,places,historical)}{l.destination&&` ← ${inventoryLocationLabel(l.destination,places,historical)}`}</small></span>
+              <span>{itemLabels.get(l.item) ?? l.item} · {l.quantity}<small className="warehouse-secondary">{placeLabel(l.location)}{l.destination&&` ← ${placeLabel(l.destination)}`}</small></span>
               <button onClick={() => setLines(lines.filter((_, j) => j !== i))}>
                 حذف
               </button>

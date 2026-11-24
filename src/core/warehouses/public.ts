@@ -24,6 +24,8 @@ export interface WarehouseLocationPolicy {
   resolveLocation(id: string): import("./domain/entities").ResolvedLocation;
   assertLocationUsable(id: string, operation: LocationOperation): void;
   listStockableLocations(warehouseId?: string): readonly import("./domain/entities").ResolvedLocation[];
+  /** Validates the warehouse and includes inactive stockable locations for reporting. */
+  listInventoryLocationIds(warehouseId: string): readonly string[];
   /** Exact-location counting never expands descendants of a stockable parent. */
   countLocationIds(id: string): readonly string[];
 }

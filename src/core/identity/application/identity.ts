@@ -1,39 +1,46 @@
-import { randomBytes, randomUUID, scrypt, timingSafeEqual } from "node:crypto";
-import { promisify } from "node:util";
-import type Database from "better-sqlite3";
 import { AppError } from "../../shared/errors/app-error";
 import { SESSION_PERMISSIONS, type SessionCapabilities, type SessionPermission } from "../../../shared/identity/types";
-const derive = promisify(scrypt);
-export function createIdentity(db: Database.Database) {
-  const sessions = new Map<number, string>();
-  const generations = new Map<number, number>();
+import type { Credentials, OperatorStore } from "./ports";
+
+function sessionChanged(): AppError {
+  return new AppError("انتهت الجلسة", "SESSION_CHANGED");
+}
+
+export function createIdentity(operators: OperatorStore, credentials: Credentials, newId: () => string) {
+  const sessions = new Map<number, { actor: string }>();
+  const attempts = new Map<number, symbol>();
   function end(window: number) {
     sessions.delete(window);
-    generations.set(window, (generations.get(window) ?? 0) + 1);
+    attempts.delete(window);
+  }
+  function requireSession(window: number) {
+    const session = sessions.get(window);
+    if (!session) throw new AppError("تسجيل الدخول مطلوب", "AUTH_REQUIRED");
+    return session;
   }
   function actor(window: number) {
-    const value = sessions.get(window);
-    if (!value) throw new AppError("تسجيل الدخول مطلوب", "AUTH_REQUIRED");
-    return value;
+    return requireSession(window).actor;
+  }
+  function guardSession(window: number) {
+    const session = requireSession(window);
+    return {
+      actor: session.actor,
+      revalidate() {
+        if (requireSession(window) !== session) throw sessionChanged();
+      },
+    };
   }
   function authorize(user: string, action: string) {
-    if (
-      !db
-        .prepare(
-          "SELECT 1 FROM operator_roles o JOIN permissions p ON p.role=o.role WHERE o.operator=? AND p.action=?",
-        )
-        .get(user, action)
-    )
+    if (!operators.hasPermission(user, action))
       throw new AppError("الصلاحية غير متاحة", "FORBIDDEN");
   }
   function needsAdmin() {
-    return !db.prepare("SELECT 1 FROM operators LIMIT 1").get();
+    return !operators.hasOperators();
   }
   function capabilities(window: number): SessionCapabilities {
-    const user = sessions.get(window);
+    const user = sessions.get(window)?.actor;
     if (!user) return { authenticated: false, permissions: [] };
-    const actions = db.prepare("SELECT DISTINCT p.action FROM operator_roles u JOIN permissions p ON p.role=u.role WHERE u.operator=? ORDER BY p.action")
-      .pluck().all(user) as string[];
+    const actions = operators.listPermissions(user);
     const permissions = actions.filter((action): action is SessionPermission => SESSION_PERMISSIONS.some(allowed => allowed === action));
     return { authenticated: true, permissions };
   }
@@ -44,34 +51,31 @@ export function createIdentity(db: Database.Database) {
     setup: boolean,
   ) {
     end(window);
-    const generation = generations.get(window);
-    let id: string;
-    if (setup) {
-      const salt = randomBytes(16).toString("hex");
-      const hash = (await derive(password, salt, 64)) as Buffer;
-      id = randomUUID();
-      db.transaction(() => {
-        if (!needsAdmin()) throw new AppError("الحساب موجود", "SETUP_COMPLETE");
-        db.prepare("INSERT INTO operators VALUES(?,?,?)").run(
-          id,
-          name,
-          "s1:" + salt + ":" + hash.toString("hex"),
-        );
-        db.prepare("INSERT INTO operator_roles VALUES(?,'admin')").run(id);
-      })();
-    } else {
-      const row = db
-        .prepare("SELECT id,digest FROM operators WHERE name=?")
-        .get(name) as { id: string; digest: string } | undefined;
-      const [, salt, expected] = (row?.digest ?? "s1:invalid:").split(":");
-      const hash = (await derive(password, salt, 64)) as Buffer;
-      if (!row || !timingSafeEqual(hash, Buffer.from(expected, "hex")))
-        throw new AppError("بيانات الدخول غير صحيحة", "INVALID_LOGIN");
-      id = row.id;
+    const attempt = Symbol();
+    attempts.set(window, attempt);
+    const assertCurrentAttempt = () => {
+      if (attempts.get(window) !== attempt) throw sessionChanged();
+    };
+    try {
+      let id: string;
+      if (setup) {
+        const digest = await credentials.hashPassword(password);
+        assertCurrentAttempt();
+        id = newId();
+        if (!operators.createFirstOperator({ id, name, digest }, "admin"))
+          throw new AppError("الحساب موجود", "SETUP_COMPLETE");
+      } else {
+        const row = operators.findByName(name);
+        const verify = await credentials.prepareVerification(password, row?.digest);
+        assertCurrentAttempt();
+        if (!row || !verify())
+          throw new AppError("بيانات الدخول غير صحيحة", "INVALID_LOGIN");
+        id = row.id;
+      }
+      sessions.set(window, { actor: id });
+    } finally {
+      if (attempts.get(window) === attempt) attempts.delete(window);
     }
-    if (generation !== generations.get(window))
-      throw new AppError("انتهت الجلسة", "SESSION_CHANGED");
-    sessions.set(window, id);
   }
   async function addOperator(
     window: number,
@@ -79,27 +83,14 @@ export function createIdentity(db: Database.Database) {
     password: string,
     roles: string[],
   ) {
-    const admin = actor(window);
+    const { actor: admin, revalidate } = guardSession(window);
     authorize(admin, "manage-users");
-    const salt = randomBytes(16).toString("hex"),
-      hash = (await derive(password, salt, 64)) as Buffer;
-    if (actor(window) !== admin)
-      throw new AppError("انتهت الجلسة", "SESSION_CHANGED");
+    const digest = await credentials.hashPassword(password);
+    revalidate();
     authorize(admin, "manage-users");
-    const id = randomUUID();
-    db.transaction(() => {
-      db.prepare("INSERT INTO operators VALUES(?,?,?)").run(
-        id,
-        name,
-        "s1:" + salt + ":" + hash.toString("hex"),
-      );
-      for (const role of new Set(roles))
-        db.prepare("INSERT INTO operator_roles VALUES(?,?)").run(id, role);
-      db.prepare(
-        "INSERT INTO audit(actor,action,target) VALUES(?,'add-user',?)",
-      ).run(admin, id);
-    })();
+    const id = newId();
+    operators.createOperator({ id, name, digest }, [...new Set(roles)], admin);
   }
-  return { actor, authorize, end, login, needsAdmin, addOperator, capabilities };
+  return { actor, authorize, end, login, needsAdmin, addOperator, capabilities, guardSession };
 }
 export type Identity = ReturnType<typeof createIdentity>;

@@ -2,6 +2,18 @@ import type { StockCommand, StockResult } from "./stock";
 import type { WarehouseManagementApi } from "../warehouses/types";
 import type { SessionCapabilities } from "../identity/types";
 import type {
+  AvailableQuantityResult,
+  BalanceConsistencyResult,
+  InventoryHistoryRequest,
+  InventoryHistoryResult,
+  StockBalanceRequest,
+  StockBalanceResult,
+  StockItemRequest,
+  StockItemStockResult,
+  WarehouseStockRequest,
+  WarehouseStockResult,
+} from "../inventory/types";
+import type {
   BarcodeLabel,
   BarcodeView,
   Brand,
@@ -25,11 +37,20 @@ export interface AppInfo {
   databaseReady: boolean;
 }
 
+export interface InventoryQueryApi {
+  getStockBalance(input: StockBalanceRequest): Promise<StockBalanceResult>;
+  getStockItemStock(input: StockItemRequest): Promise<StockItemStockResult>;
+  getWarehouseStock(input: WarehouseStockRequest): Promise<WarehouseStockResult>;
+  getAvailableQuantity(input: StockBalanceRequest): Promise<AvailableQuantityResult>;
+  getInventoryHistory(input: InventoryHistoryRequest): Promise<InventoryHistoryResult>;
+  verifyBalanceConsistency(input: StockBalanceRequest): Promise<BalanceConsistencyResult>;
+}
+
 export interface WarehouseApi {
   warehouses: WarehouseManagementApi;
   identity:{ getCapabilities():Promise<SessionCapabilities>; add(input:{name:string;password:string;roles:("admin"|"clerk"|"supervisor")[]}):Promise<void>; setupRequired():Promise<boolean>; login(input:{name:string;password:string;setup:boolean}):Promise<void>; logout():Promise<void> };
   recovery:{backup():Promise<string|null>;restore():Promise<string|null>};
-  inventory:{ execute(command:StockCommand):Promise<StockResult> };
+  inventory: InventoryQueryApi & { execute(command: StockCommand): Promise<StockResult> };
   system: {
     getAppInfo(): Promise<AppInfo>;
   };

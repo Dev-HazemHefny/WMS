@@ -3,6 +3,14 @@ import { Boxes, LogOut, ShieldCheck, UserPlus } from "lucide-react";
 import type { SessionCapabilities } from "../shared/identity/types";
 import { SessionContext } from "./session-context";
 import { errorMessage } from "./ui";
+
+function clearInventoryFilters() {
+  const { hash } = window.location;
+  if (hash.startsWith("#/inventory?") || (hash.startsWith("#/inventory/") && hash.includes("?"))) {
+    window.history.replaceState(window.history.state, "", hash.split("?")[0]);
+  }
+}
+
 export function Session({ children }: { children: ReactNode }) {
   const [setup, setSetup] = useState<boolean | null>(null),
     [capabilities, setCapabilities] = useState<SessionCapabilities>({authenticated:false,permissions:[]}),
@@ -13,9 +21,15 @@ export function Session({ children }: { children: ReactNode }) {
     const request = ++generation.current;
     try {
       const current = await window.warehouse.identity.getCapabilities();
-      if (request === generation.current) setCapabilities(current);
+      if (request === generation.current) {
+        if (!current.authenticated) clearInventoryFilters();
+        setCapabilities(current);
+      }
     } catch (caught) {
-      if (request === generation.current) setCapabilities({authenticated:false,permissions:[]});
+      if (request === generation.current) {
+        clearInventoryFilters();
+        setCapabilities({authenticated:false,permissions:[]});
+      }
       throw caught;
     }
   }, []);
@@ -76,6 +90,7 @@ export function Session({ children }: { children: ReactNode }) {
           className="button button-secondary"
           onClick={async () => {
             ++generation.current;
+            clearInventoryFilters();
             setCapabilities({authenticated:false,permissions:[]});
             setSetup(false);
             setBusy(true);

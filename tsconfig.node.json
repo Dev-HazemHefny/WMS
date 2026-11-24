@@ -17,6 +17,7 @@
   },
   "include": [
     "electron/**/*.ts",
-    "electron.vite.config.ts"
+    "electron.vite.config.ts",
+    "scripts/pre-phase-5/*.ts"
   ]
 }

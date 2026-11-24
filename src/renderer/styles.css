@@ -391,6 +391,25 @@ input[type="checkbox"] { width: 17px; min-height: 17px; height: 17px; margin: 0;
 .inventory-page fieldset > table { margin-top: 20px; background: white; border: 1px solid var(--color-border); table-layout: fixed; }
 .inventory-page fieldset > table td { overflow-wrap: anywhere; }
 .inventory-feedback { background: var(--color-primary-soft); border: 1px solid #c9e5dc; color: #225c52; overflow-wrap: anywhere; }
+
+.inventory-report { min-width: 0; }
+.inventory-nav { display: flex; flex-wrap: wrap; gap: 8px; margin-block-end: 22px; }
+.inventory-nav [aria-current="page"] {
+  background: var(--color-primary-soft);
+  border-color: var(--color-primary);
+  color: var(--color-primary-hover);
+}
+.inventory-report select { width: 100%; }
+.inventory-report .filters label { min-width: min(100%, 160px); max-width: 100%; }
+.inventory-report table { min-width: 490px; }
+.inventory-report td { overflow-wrap: anywhere; }
+.inventory-row-secondary { display: block; margin-block-start: 3px; color: var(--color-text-muted); }
+.inventory-quantity { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.inventory-positive { color: var(--color-success); }
+.inventory-negative { color: var(--color-danger); }
+.inventory-metrics { display: flex; flex-wrap: wrap; gap: 16px 34px; margin-block: 14px 18px; padding: 18px 20px; }
+.inventory-metrics dt { color: var(--color-text-muted); font-size: var(--font-size-sm); }
+.inventory-metrics dd { margin: 6px 0 0; font-size: var(--font-size-xl); font-weight: 700; overflow-wrap: anywhere; }
 @media (max-width: 1000px) {
   .inventory-entry { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .login-intro { padding: 45px; }

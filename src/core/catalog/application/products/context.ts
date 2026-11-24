@@ -27,7 +27,7 @@ import type {
   UnitRepository,
   VariantRepository
 } from "../../domain/repositories";
-import { assertValidImageDataUrl, parseBarcode } from "../../domain/values";
+import { parseBarcode } from "../../domain/values";
 import type { Clock, IdGenerator, ImageStorage, UnitOfWork } from "../ports";
 
 export interface ProductDependencies {
@@ -52,7 +52,6 @@ export interface ProductContext {
   requireActiveUnit(id: string): Unit;
   requireActiveBrand(id: string | null | undefined): Brand | null;
   reserveSku(sku: string, ownerId?: string): void;
-  saveImage(dataUrl: string | null | undefined, id: string, previous: string | null): string | null;
   toVariantView(variant: StoredVariant): VariantView;
   details(id: string): ProductDetails;
   insertPackaging(
@@ -116,18 +115,6 @@ export function createProductContext(deps: ProductDependencies): ProductContext 
   const reserveSku = (sku: string, ownerId?: string): void => {
     const owner = deps.products.skuOwner(sku);
     if (owner && owner.ownerId !== ownerId) throw new DomainError("DUPLICATE_SKU", `كود الصنف مستخدم بالفعل: ${sku}`);
-  };
-
-  const saveImage = (dataUrl: string | null | undefined, id: string, previous: string | null): string | null => {
-    if (dataUrl === undefined) return previous;
-    if (!dataUrl) {
-      if (previous) deps.images.remove(previous);
-      return null;
-    }
-    const extension = assertValidImageDataUrl(dataUrl);
-    const imagePath = deps.images.save({ dataUrl, folder: "products", fileName: `${id}.${extension}` });
-    if (previous && previous !== imagePath) deps.images.remove(previous);
-    return imagePath;
   };
 
   const toVariantView = (variant: StoredVariant): VariantView => {
@@ -245,7 +232,6 @@ export function createProductContext(deps: ProductDependencies): ProductContext 
     requireActiveUnit,
     requireActiveBrand,
     reserveSku,
-    saveImage,
     toVariantView,
     details,
     insertPackaging,

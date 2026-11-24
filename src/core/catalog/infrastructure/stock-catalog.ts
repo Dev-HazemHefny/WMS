@@ -3,10 +3,17 @@ import { Quantity } from "../../../shared/catalog/quantity";
 import { ConversionFactor } from "../../../shared/catalog/conversion";
 import { AppError } from "../../shared/errors/app-error";
 import type { StockLine } from "../../../shared/ipc/stock";
+import type { StockCatalog, StockItemDirectory } from "../public";
 function fail(code: string): never {
   throw new AppError(code, code);
 }
-export function createStockCatalog(db: Database.Database) {
+const selectStockItem = `SELECT coalesce(v.base_unit_id,p.base_unit_id) unit,
+  p.allow_decimal_quantity decimals,s.product_id product,s.variant_id variant
+  FROM stock_items s LEFT JOIN product_variants v ON v.id=s.variant_id
+  JOIN products p ON p.id=coalesce(s.product_id,v.product_id)
+  JOIN units u ON u.id=coalesce(v.base_unit_id,p.base_unit_id) WHERE s.id=?`;
+
+export function createStockCatalog(db: Database.Database): StockCatalog & StockItemDirectory {
   const get = <T>(sql: string, ...args: unknown[]) =>
     db.prepare(sql).get(...args) as T | undefined;
   function resolveStockItem(line: StockLine, count: boolean) {
@@ -17,9 +24,7 @@ export function createStockCatalog(db: Database.Database) {
         product: string | null;
         variant: string | null;
       }>(
-        `SELECT coalesce(v.base_unit_id,p.base_unit_id) unit,p.allow_decimal_quantity decimals,s.product_id product,s.variant_id variant
-   FROM stock_items s LEFT JOIN product_variants v ON v.id=s.variant_id JOIN products p ON p.id=coalesce(s.product_id,v.product_id)
-   JOIN units u ON u.id=coalesce(v.base_unit_id,p.base_unit_id) WHERE s.id=? AND p.status='active' AND coalesce(v.status,'active')='active' AND u.status='active'`,
+        `${selectStockItem} AND p.status='active' AND coalesce(v.status,'active')='active' AND u.status='active'`,
         line.item,
       ) ?? fail("ITEM_UNAVAILABLE");
     let factor = ConversionFactor.of(1, 1),
@@ -61,6 +66,10 @@ export function createStockCatalog(db: Database.Database) {
     };
   }
   return {
+    findStockItem(itemId) {
+      const owner = get<{ unit: string }>(selectStockItem, itemId);
+      return owner ? { baseUnitId: owner.unit } : null;
+    },
     resolveStockItem,
     resolveBarcode(code: string) {
       return (

@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, unlinkSync, writeFileSync, existsSync } from "node:fs";
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ImageStorage } from "../application/ports";
 
@@ -60,8 +60,25 @@ export class FileImageStorage implements ImageStorage {
     mkdirSync(dir, { recursive: true });
     const fileName = sanitizeFileName(input.fileName);
     const filePath = join(dir, fileName);
-    writeFileSync(filePath, buffer);
-    return `${input.folder}/${fileName}`;
+    const relativePath = `${input.folder}/${fileName}`;
+    const file = openSync(filePath, "wx");
+    let failure: { error: unknown } | undefined;
+    try {
+      writeFileSync(file, buffer);
+      fsyncSync(file);
+    } catch (error) {
+      failure = { error };
+    }
+    try {
+      closeSync(file);
+    } catch (error) {
+      failure ??= { error };
+    }
+    if (failure) {
+      this.remove(relativePath);
+      throw failure.error;
+    }
+    return relativePath;
   }
 
   read(relativePath: string): string | null {

@@ -1,6 +1,6 @@
 import Database from "better-sqlite3";
-import { runMigrations, verifyDatabase } from "../../../../electron/main/database/migrations";
-import { createIdentity } from "../../identity/application/identity";
+import { CURRENT_SCHEMA_VERSION, runMigrations, verifyDatabase } from "../../../../electron/main/database/migrations";
+import { createSqliteIdentity } from "../../identity/infrastructure/create-sqlite-identity";
 import { createSqliteLocationUsage } from "../../inventory/infrastructure/sqlite-location-usage";
 import { createInventory } from "../../inventory/infrastructure/sqlite-inventory";
 import { createStockCatalog } from "../../catalog/infrastructure/stock-catalog";
@@ -12,7 +12,7 @@ import { SqliteBranchRepository, SqliteLocationRepository, SqliteWarehouseReposi
 import type { StorageLocation } from "../domain/entities";
 
 let db: Database.Database;
-let identity: ReturnType<typeof createIdentity>;
+let identity: ReturnType<typeof createSqliteIdentity>;
 let services: ReturnType<typeof createSqliteWarehouses>;
 let usage: ReturnType<typeof createSqliteLocationUsage>;
 let inventory: ReturnType<typeof createInventory>;
@@ -41,7 +41,7 @@ function setStatus(target: StorageLocation, status: "active" | "inactive") {
 beforeEach(async () => {
   db = new Database(":memory:");
   runMigrations(db);
-  identity = createIdentity(db);
+  identity = createSqliteIdentity(db);
   await identity.login(1,"admin","test-password-123",true);
   usage = createSqliteLocationUsage(db);
   services = createSqliteWarehouses(db,{
@@ -58,7 +58,7 @@ beforeEach(async () => {
 });
 afterEach(() => {
   try {
-    expect(verifyDatabase(db)).toBe(7);
+    expect(verifyDatabase(db)).toBe(CURRENT_SCHEMA_VERSION);
     expect(db.pragma("foreign_keys",{simple:true})).toBe(1);
     expect(db.pragma("foreign_key_check")).toEqual([]);
     expect(db.pragma("integrity_check",{simple:true})).toBe("ok");
